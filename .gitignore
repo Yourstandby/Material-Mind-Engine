@@ -1,0 +1,11 @@
+chroma_db/
+profiles/
+raw_json/
+.firecrawl/
+.env
+__pycache__/
+.idea/
+venv/
+cleaned*.json
+cleaned_*.json
+*.json.bak
