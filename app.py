@@ -1,8 +1,9 @@
-"""前端入口：按 FRONTEND 环境变量选择 Chainlit（默认）或 Gradio。
+"""前端入口：启动 Web 服务（FastAPI + SSE）。
 
-用法: FRONTEND=gradio python app.py
+用法: python app.py
+      python app.py --port 8123
 """
-import os
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -11,13 +12,20 @@ ROOT = Path(__file__).resolve().parent
 
 
 def main():
-    gradio = os.environ.get("FRONTEND", "chainlit").lower() == "gradio"
-    command = (
-        [sys.executable, str(ROOT / "ui" / "gradio_app.py")]
-        if gradio
-        else [sys.executable, "-m", "chainlit", "run", str(ROOT / "ui" / "chainlit_app.py"), "-w"]
-    )
-    subprocess.run(command)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", default="8000")
+    parser.add_argument("--reload", action="store_true", help="代码改动自动重载")
+    args = parser.parse_args()
+
+    command = [
+        sys.executable, "-m", "uvicorn", "server.main:app",
+        "--host", "127.0.0.1", "--port", args.port,
+    ]
+    if args.reload:
+        command.append("--reload")
+
+    print(f"Material Mind Engine -> http://127.0.0.1:{args.port}")
+    subprocess.run(command, cwd=ROOT)
 
 
 if __name__ == "__main__":

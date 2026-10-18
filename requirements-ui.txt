@@ -1,2 +1,0 @@
-chainlit
-gradio<6.0

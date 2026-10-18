@@ -1,11 +1,22 @@
+# ---- 数据与运行产物（不入库）----
 chroma_db/
-profiles/
-raw_json/
-.firecrawl/
-.env
-__pycache__/
-.idea/
-venv/
+inbox/
+raw.json
 cleaned*.json
 cleaned_*.json
 *.json.bak
+feedback.jsonl
+quarantine.jsonl
+ingest.log
+profiles/
+raw_json/
+.firecrawl/
+.gradio/
+
+# ---- 密钥与本地环境 ----
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.idea/

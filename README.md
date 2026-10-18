@@ -18,7 +18,9 @@ python extract.py --profile profiles/peek.yaml
 python query.py "PEEK 的耐温范围是多少？" --collection peek
 ```
 
-GUI：`python app.py`
+GUI：`python app.py` → 打开 `http://127.0.0.1:8000`
+
+前端依赖：`pip install -r requirements-web.txt`
 
 ## 新增一种材料
 
@@ -52,7 +54,9 @@ python -m pytest tests/
 | data_cleaner.py | 字段映射、单位统一（℃ / MPa）、置信度过滤 |
 | vector_store.py | 清洗结果序列化后嵌入并写入 Chroma（`--reset` 重建，可免传 input 自动定位 merged.json） |
 | query.py | 检索 Chroma 并由 LLM 生成带来源的回答 |
-| app.py | Gradio 网页界面：问题 + collection 选择 → 回答 + 来源 |
+| app.py | 启动 Web 服务（FastAPI + SSE） |
+| server/main.py | HTTP 接口：`/api/bootstrap` `/api/chat`（SSE 流式）`/api/records` |
+| web/ | 前端：原生 HTML/CSS/JS，无构建步骤 |
 | feedback.py | 把 feedback.jsonl 的人工纠错 upsert 进同一 collection（`--interactive` 交互式录入） |
 | main.py | 项目入口占位 |
 | profiles/*.yaml | 材料 profile：字段映射 + 抽取提示词 + 关键词 |
