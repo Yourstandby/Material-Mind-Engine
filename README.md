@@ -68,3 +68,13 @@ python -m pytest tests/
 | OPENAI_API_KEY | LLM API 密钥 |
 | OPENAI_BASE_URL | LLM 兼容接口地址 |
 | LLM_MODEL | 模型名（如 deepseek-chat） |
+
+## 许可证
+
+本项目采用 **GNU Affero General Public License v3.0**（见 [LICENSE](LICENSE)）。
+
+- 内部使用、二次开发、分发：遵循 AGPL-3.0
+- 闭源集成、作为 SaaS 对外提供且不愿公开源码：需购买商业授权，见 [COMMERCIAL.md](COMMERCIAL.md)
+- 提交贡献前请阅读 [CLA.md](CLA.md)，提交 PR 即视为同意
+
+Copyright (c) 2026 Material-Mind-Engine Contributors
