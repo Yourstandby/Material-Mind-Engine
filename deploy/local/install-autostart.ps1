@@ -31,7 +31,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
     -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 2)
 
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
-    -Description "Material Mind Engine 本地模型栈（Embedding / OCR / 网关 / Web）" -Force | Out-Null
+    -Description "Material Mind Engine 本地模型栈（Embedding / OCR / 网关 / Chroma / Web）" -Force | Out-Null
 
 Write-Host "已注册计划任务 $taskName（当前用户登录时启动）" -ForegroundColor Green
 Write-Host "  立即试跑：Start-ScheduledTask -TaskName $taskName" -ForegroundColor Gray

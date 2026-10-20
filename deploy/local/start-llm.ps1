@@ -2,18 +2,18 @@
 #
 # 说明：
 #   - 只绑 127.0.0.1，对外只经网关出 key
-#   - KV cache 用 q8_0，省一半显存，2 个并发槽各 32K 上下文
+#   - KV cache 用 q8_0，省一半显存；槽数/上下文由 .env 的 MME_LLM_NP / MME_LLM_CTX 决定
 #   - 启动成功后自动把 .env 的 UPSTREAM_LLM 指到本脚本的端口
 #
 # 用法：
-#   .\deploy\local\start-llm.ps1              # 8080/8010 默认端口，见 .env
-#   .\deploy\local\start-llm.ps1 -Port 8010 -Parallel 2
+#   .\deploy\local\start-llm.ps1              # 端口/槽数/上下文都读 .env
+#   .\deploy\local\start-llm.ps1 -Port 8010 -Parallel 4 -Ctx 131072
 
 param(
     [int]$Port = 0,
-    [int]$Parallel = 2,
-    [int]$Ctx = 65536,
-    [int]$Threads = 32,
+    [int]$Parallel = 0,
+    [int]$Ctx = 0,
+    [int]$Threads = 0,
     [switch]$Force
 )
 
@@ -21,6 +21,10 @@ param(
 Import-DotEnv
 
 if ($Port -eq 0) { $Port = $PORT_LLM }
+# 默认值来自 .env，改配置不用改脚本
+if ($Parallel -eq 0) { $Parallel = [int](Get-Cfg "MME_LLM_NP" "2") }
+if ($Ctx -eq 0) { $Ctx = [int](Get-Cfg "MME_LLM_CTX" "65536") }
+if ($Threads -eq 0) { $Threads = [int](Get-Cfg "MME_LLM_THREADS" "32") }
 
 $bin = Get-Cfg "MME_LLM_BIN" "D:\models\llamacpp\bin\llama-server.exe"
 $gguf = Get-Cfg "MME_LLM_GGUF" "D:\models\qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"

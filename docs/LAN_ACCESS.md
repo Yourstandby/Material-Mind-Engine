@@ -9,14 +9,17 @@
 
 | 能力 | 地址 | 模型名 | 说明 |
 |---|---|---|---|
-| 对话 | `http://172.16.1.210:8100/v1/chat/completions` | `qwen2.5-72b-instruct` | 2 个并发槽，每槽 32K 上下文 |
+| 对话 | `http://172.16.1.210:8100/v1/chat/completions` | `qwen2.5-72b-instruct` | 全机 4 个并发槽，每槽 32K；**单 Key 最多 2 个在途** |
 | 向量 | `http://172.16.1.210:8100/v1/embeddings` | `bge-m3` | **固定 1024 维**，8192 上下文 |
 | OCR | `http://172.16.1.210:8100/ocr` | — | multipart 上传图片，返回 `{text, lines, elapsed_ms}` |
 | 模型列表 | `GET /v1/models` | — | 用来确认模型名 |
 | 健康 | `GET /health` | — | 不需要 key |
 | 用量 | `GET /admin/usage?hours=24` | — | 需 `X-Admin-Token` 头 |
+| 在途数 | `GET /admin/inflight` | — | 需 `X-Admin-Token` 头 |
 
 鉴权：`Authorization: Bearer mme-xxxx`（除 `/health` 外都要）。
+
+超限返回：`429`。两种原因——超过每分钟请求数（rpm），或**同一 Key 的在途请求数超限**（默认 2）。
 
 ---
 
@@ -107,13 +110,16 @@ cd D:\OC\MME
 .\.venv\Scripts\python -m scripts.make_key --revoke 2               # 吊销
 ```
 
-看用量：
+看用量与在途数：
 
 ```bash
 curl "http://172.16.1.210:8100/admin/usage?hours=24" -H "X-Admin-Token: <GATEWAY_ADMIN_TOKEN>"
+curl "http://172.16.1.210:8100/admin/inflight"      -H "X-Admin-Token: <GATEWAY_ADMIN_TOKEN>"
 ```
 
-**别让所有项目共用一把 key**——rpm 是按 key 算的，共用的话 A 项目跑批会把 B 项目一起打成 429，而且分不清是谁用的。
+**别让所有项目共用一把 key**——rpm 和并发上限都是按 key 算的，共用的话 A 项目跑批会把 B 项目一起打成 429，而且分不清是谁用的。
+
+并发上限在 `.env` 里：`GATEWAY_KEY_CONCURRENCY=2`（0 = 不限）。改完重启网关生效：`.\deploy\local\start-gateway.ps1 -Force`。
 
 ---
 
@@ -125,22 +131,30 @@ curl "http://172.16.1.210:8100/admin/usage?hours=24" -H "X-Admin-Token: <GATEWAY
 |---|---|---|---|
 | 1 | **端口抢占** | 新项目也监听 8100/8300 → 起不来，或把请求接走 | 用下面的端口台账，禁止项目自带模型服务 |
 | 2 | **显存争抢** | 新项目自己起 Ollama/vLLM → OOM，或把 LLM 挤到 CPU | 只允许走网关；本机不再给第二个模型进程 |
-| 3 | **算力排队** | A 项目一次发 10 个请求，占满 2 个槽，B 项目全部卡住 | 一项目一 key + rpm；重活错峰；必要时加并发闸门或加槽（见下） |
-| 4 | **向量库文件锁** | 两个进程同时开 `chroma_db` → `database is locked` / 数据错乱 | **不要共享目录**，见第 6 节 |
+| 3 | **算力排队** | A 项目一次发 10 个请求，占满并发槽，B 项目全部卡住 | 一项目一 key + rpm + **每 key 并发闸门**；重活错峰 |
+| 4 | **向量库文件锁** | 两个进程同时开 `chroma_db` → `database is locked` / 数据错乱 | **已改 server 模式**，见第 6 节 |
 | 5 | **数据混库** | A 项目的数据被 B 项目检索到 | 一项目一 collection，或一项目一库 |
 
 ### 现在的隔离边界（已经生效）
 
 - 模型服务只绑 `127.0.0.1`，局域网**物理上只能访问 8100 和 8300**；
-- 网关有 key 鉴权 + 每 key 的 rpm 限流 + 用量审计；
+- 网关有 key 鉴权 + 每 key 的 rpm 限流 + **每 key 并发闸门** + 用量审计；
+- 并发闸门：同一 Key 最多 `GATEWAY_KEY_CONCURRENCY`（默认 2）个在途请求，超了立刻 429，不会排队占槽；
+- 全机 4 个 LLM 并发槽，两个项目各 2 路可以同时满速跑；
 - 每个请求的用量记在 `gateway.db`，出问题能按 key 定位。
 
-### 建议再补三条
+### 已经落实的三件事
 
-1. **并发闸门**（推荐，约 30 行）：给网关加"每 key 最多 N 个在途请求"的信号量。
-   现在只有 rpm 限制，rpm 600 的项目一瞬间发 600 个也能把 2 个槽占死。加了以后一个项目最多占 1~2 个槽，别人永远有位置。
-2. **加槽**：现在 `-np 2`（每槽 32K）。显存还剩 ~33GB，可以开到 `-np 4`，代价是单路速度下降、并发能力翻倍。改 `.env` 的 `MME_PORT_LLM` 附近参数，跑 `start-llm.ps1 -Force -Parallel 4 -Ctx 65536`。
-3. **embedding 挪到 CPU**：bge-m3 在双路 52 线程的 Xeon 上跑短文本足够快（10~30ms/条），把 GPU 显存全留给 LLM，也少一个 GPU 争抢源。
+1. ✅ **并发闸门**：`gateway/main.py` 里的 `acquire_slot/release_slot`，配置项 `GATEWAY_KEY_CONCURRENCY`（0 = 不限）。
+   实测：同一 key 同时发 3 个 → 2 个成功、1 个 0.9 秒内 429；两个 key 各发 2 个 → 4 个同时跑完（3.2 秒）。
+2. ✅ **加槽**：`-np 4`（每槽 32K，总上下文 131072），显存 68.7 GB / 92 GB。改 `.env` 的 `MME_LLM_NP` / `MME_LLM_CTX` 即可。
+3. ✅ **向量库改 server 模式**：独立进程 `127.0.0.1:8001`，见第 6 节。
+
+### 还可以做（按需）
+
+- **embedding 挪到 CPU**：bge-m3 在双路 52 线程 Xeon 上跑短文本足够快（10~30ms/条），把 2 GB 显存也让给 LLM，少一个 GPU 争抢源。
+- **按 key 记 Token 配额**：现在是 rpm + 在途数，还没有"每月多少 token"的硬额度。
+
 
 ---
 
@@ -150,17 +164,19 @@ curl "http://172.16.1.210:8100/admin/usage?hours=24" -H "X-Admin-Token: <GATEWAY
 
 ### (a) 向量库（知识库检索）
 
-**现在 MME 用的是嵌入式 Chroma（`CHROMA_MODE=embedded`），它本质是本地文件 + 文件锁，只适合单进程。**
+**现在 MME 用的是 Chroma server 模式（`CHROMA_MODE=server`，进程在 `127.0.0.1:8001`）：**
+写操作由这一个进程统一调度，MME 的多个 worker / 多个本机项目通过 HTTP 访问，不会再出现文件锁冲突。
 
-只要出现"第二个项目也要用同一个库"，就必须二选一：
+但**别的机器**要用这个库，还有两道坎：Chroma 自身没有鉴权（谁连上谁能删库），而且直接把 8001 暴露到局域网等于把库交给全网。
 
 | 方案 | 适用 | 做法 |
 |---|---|---|
-| **Chroma server 模式** | 临时、轻量、多个只读/低频写 | `chroma run --path ./chroma_db --host 0.0.0.0 --port 8001`，各项目把 `CHROMA_MODE=server`、`CHROMA_HOST=172.16.1.210`、`CHROMA_PORT=8001` |
-| **PostgreSQL + pgvector** | 长期、多项目、要备份/权限/事务 | 建一个 PG 实例，**每个项目一个 schema 或一个 database**，向量列固定 `vector(1024)` |
+| **本机共享（已就绪）** | 同机多进程/多项目 | 直接连 `127.0.0.1:8001`，`CHROMA_MODE=server` |
+| **局域网共享（推荐 pgvector）** | 多机器、要备份/权限/事务 | PostgreSQL + pgvector，**每个项目一个 schema 或 database**，向量列固定 `vector(1024)` |
+| 局域网共享（轻量） | 临时看数、低频 | Chroma server 前面套一层带 basic-auth 的 nginx，别裸奔 |
 
 不要做的事：
-- ❌ 多个项目挂同一个 `chroma_db` 目录（必锁死）；
+- ❌ 多个项目挂同一个 `chroma_db` 目录（embedded 模式必锁死）；
 - ❌ 多个项目往同一个 collection 写（数据互相污染，且删不干净）；
 - ❌ 不同 embedding 模型共用一个库（bge-m3 建的是 1024 维，换个 768 维的模型直接对不上，MME 会报"该知识库由 xxx 构建"）。
 
@@ -199,12 +215,12 @@ MME 自己用的是 SQLite（`auth.db`、`gateway.db`、`library/index.json`）�
 |---|---|---|---|
 | 80 | reagent-nginx（Docker） | 0.0.0.0 | ❌ 已占 |
 | 8000 | reagent-app（Docker） | 0.0.0.0 | ❌ 已占 |
+| 8001 | MME Chroma server | 127.0.0.1 | ❌ 已占 |
 | 8002 | MME Embedding | 127.0.0.1 | ❌ |
 | 8010 | MME LLM | 127.0.0.1 | ❌ |
 | 8100 | MME 网关 | 0.0.0.0 | ❌ |
 | 8101 | MME OCR | 127.0.0.1 | ❌ |
 | 8300 | MME Web | 0.0.0.0 | ❌ |
-| 8001 | （预留）Chroma server | — | ⚠️ 规划给向量库 |
 | 5432 | （预留）PostgreSQL | — | ⚠️ 规划给共享业务库 |
 | 8300–8399 | 新项目 Web | — | ✅ 建议段 |
 | 8400–8499 | 新项目 API | — | ✅ 建议段 |
@@ -215,7 +231,8 @@ MME 自己用的是 SQLite（`auth.db`、`gateway.db`、`library/index.json`）�
 
 ## 8. 已知限制
 
-- **单路 72B ≈ 11–16 tok/s**，2 路并发时每路 8–13 tok/s。适合内网几个人用，不适合高并发产品。
+- **单路 72B ≈ 11–16 tok/s**，4 路并发时每路约 8–13 tok/s（实测 4 路短答 3.2 秒全部返回）。适合内网几个人用，不适合高并发产品。
+- 单 Key 默认最多 2 个在途请求（`GATEWAY_KEY_CONCURRENCY`），需要更多就调大或按项目分 key。
 - 32K 上下文（每槽），超长文档要切块，不要整篇塞。
-- 网关只做转发，**没有请求队列和优先级**；重活请错峰（比如批量入库放到晚上）。
+- 网关做转发 + 限流 + 并发闸门，但**没有请求队列和优先级**；重活请错峰（比如批量入库放到晚上）。
 - OCR 是 CPU 版，A4 扫描页约 2–4 秒，批量扫描件会明显吃 CPU。

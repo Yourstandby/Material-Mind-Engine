@@ -1,6 +1,9 @@
 ﻿# 启动 MME Web（FastAPI + 原生前端 + inbox 监听）
 #
-# 注意：CHROMA_MODE=embedded 时只能单 worker（多进程会抢 chroma 写锁）。
+# 注意：
+#   - CHROMA_MODE=server 时可以开多 worker（向量库由独立进程调度）
+#   - CHROMA_MODE=embedded 时只能单 worker（多进程会抢 chroma 写锁）
+#   - 默认 1 worker，够用；并发高了再加
 
 param(
     [int]$Port = 0,

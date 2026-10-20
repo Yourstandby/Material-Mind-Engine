@@ -45,6 +45,14 @@ Line "Embedding" "$embedBase" $embedOk $dim
 $ocrOk = Test-Http "$ocrBase/health" 5
 Line "OCR" "$ocrBase" $ocrOk
 
+$chromaMode = Get-Cfg "CHROMA_MODE" "embedded"
+if ($chromaMode -eq "server") {
+    $chromaOk = Test-Http "http://127.0.0.1:$PORT_CHROMA/api/v2/heartbeat" 5
+    Line "Chroma" "http://127.0.0.1:$PORT_CHROMA" $chromaOk "server 模式"
+} else {
+    Line "Chroma" "embedded" $true "单进程模式，未起服务"
+}
+
 $gwOk = Test-Http "http://127.0.0.1:$PORT_GATEWAY/health" 5
 Line "网关" "http://127.0.0.1:$PORT_GATEWAY" $gwOk
 

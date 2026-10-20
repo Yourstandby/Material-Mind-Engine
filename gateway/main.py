@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -30,6 +31,61 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from gateway import store
 
 app = FastAPI(title="MME Gateway", docs_url="/api/docs", redoc_url=None)
+
+# ---- 每 Key 并发闸门 ----
+# 只有 rpm 限制不够：一个项目瞬间发 100 个请求照样能把 LLM 的两三个槽占死。
+# 这里限制"同一 Key 同时在进行中的请求数"，超了直接 429，别人还留着位置。
+_INFLIGHT: dict[int, int] = {}
+_INFLIGHT_LOCK = asyncio.Lock()
+
+
+def _concurrency_limit() -> int:
+    try:
+        return int(_env("GATEWAY_KEY_CONCURRENCY", "2") or 2)
+    except ValueError:
+        return 2
+
+
+async def acquire_slot(key: dict):
+    """占用一个并发位；超限返回 None。返回的对象必须 release()（幂等）。"""
+    limit = _concurrency_limit()
+    if limit <= 0:  # 0 / 负数 = 不限
+        return _Slot(key, False)
+    async with _INFLIGHT_LOCK:
+        current = _INFLIGHT.get(key["id"], 0)
+        if current >= limit:
+            return None
+        _INFLIGHT[key["id"]] = current + 1
+    return _Slot(key, True)
+
+
+class _Slot:
+    __slots__ = ("key", "_held", "_released")
+
+    def __init__(self, key: dict, held: bool):
+        self.key = key
+        self._held = held
+        self._released = False
+
+    async def release(self) -> None:
+        if not self._held or self._released:
+            return
+        self._released = True
+        async with _INFLIGHT_LOCK:
+            current = _INFLIGHT.get(self.key["id"], 0) - 1
+            if current <= 0:
+                _INFLIGHT.pop(self.key["id"], None)
+            else:
+                _INFLIGHT[self.key["id"]] = current
+
+
+def guard_concurrency() -> None:
+    raise HTTPException(
+        status_code=429,
+        detail=f"并发超限：同一 API Key 最多 {_concurrency_limit()} 个在途请求，请重试",
+        headers={"Retry-After": "2"},
+    )
+
 
 
 def _env(name: str, default: str = "") -> str:
@@ -99,9 +155,12 @@ async def models(request: Request, key: dict = Depends(require_key)):
 
 @app.post("/v1/embeddings")
 async def embeddings(request: Request, key: dict = Depends(require_key)):
-    body = await request.body()
+    slot = await acquire_slot(key)
+    if slot is None:
+        guard_concurrency()
     started, status, tokens = time.time(), 500, 0
     try:
+        body = await request.body()
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
                 f"{_embed_base()}/embeddings",
@@ -112,48 +171,62 @@ async def embeddings(request: Request, key: dict = Depends(require_key)):
         return JSONResponse(resp.json(), status_code=status)
     finally:
         _log(request, "/v1/embeddings", status, tokens, started)
+        await slot.release()
 
 
 @app.post("/v1/chat/completions")
 async def chat(request: Request, key: dict = Depends(require_key)):
-    body = await request.body()
-    stream = False
-    try:
-        stream = bool(json.loads(body or b"{}").get("stream"))
-    except json.JSONDecodeError:
-        pass
-
+    slot = await acquire_slot(key)
+    if slot is None:
+        guard_concurrency()
+    started = time.time()
     url = f"{_llm_base()}/chat/completions"
     headers = _headers(_env("UPSTREAM_LLM_KEY"))
-    started = time.time()
 
-    if not stream:
-        async with httpx.AsyncClient(timeout=None) as client:
-            resp = await client.post(url, content=body, headers=headers)
-        _log(request, "/v1/chat/completions", resp.status_code, _tokens(resp), started)
-        return JSONResponse(
-            resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {},
-            status_code=resp.status_code,
-        )
-
-    async def relay():
+    try:
+        body = await request.body()
+        stream = False
         try:
-            async with httpx.AsyncClient(timeout=None) as client:
-                async with client.stream("POST", url, content=body, headers=headers) as resp:
-                    if resp.status_code >= 400:
-                        detail = await resp.aread()
-                        yield b'data: {"error": "' + detail[:200] + b'"}\n\n'
-                        return
-                    async for chunk in resp.aiter_raw():
-                        yield chunk
-        finally:
-            _log(request, "/v1/chat/completions", 200, 0, started)
+            stream = bool(json.loads(body or b"{}").get("stream"))
+        except json.JSONDecodeError:
+            pass
 
-    return StreamingResponse(
-        relay(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+        if not stream:
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    resp = await client.post(url, content=body, headers=headers)
+                _log(request, "/v1/chat/completions", resp.status_code, _tokens(resp), started)
+                return JSONResponse(
+                    resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {},
+                    status_code=resp.status_code,
+                )
+            finally:
+                await slot.release()
+
+        async def relay():
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("POST", url, content=body, headers=headers) as resp:
+                        if resp.status_code >= 400:
+                            detail = await resp.aread()
+                            yield b'data: {"error": "' + detail[:200] + b'"}\n\n'
+                            return
+                        async for chunk in resp.aiter_raw():
+                            yield chunk
+            finally:
+                _log(request, "/v1/chat/completions", 200, 0, started)
+                await slot.release()
+
+        return StreamingResponse(
+            relay(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except BaseException:
+        await slot.release()
+        raise
+
+
 
 
 @app.post("/ocr")
@@ -161,12 +234,19 @@ async def ocr(request: Request, key: dict = Depends(require_key)):
     upstream = _env("UPSTREAM_OCR")
     if not upstream:
         raise HTTPException(status_code=501, detail="未配置 UPSTREAM_OCR")
-    body = await request.body()
+    slot = await acquire_slot(key)
+    if slot is None:
+        guard_concurrency()
     started = time.time()
-    async with httpx.AsyncClient(timeout=300) as client:
-        resp = await client.post(f"{upstream.rstrip('/')}/ocr", content=body, headers=headers_of(request))
-    _log(request, "/ocr", resp.status_code, 0, started)
-    return JSONResponse(resp.json(), status_code=resp.status_code)
+    try:
+        body = await request.body()
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(f"{upstream.rstrip('/')}/ocr", content=body, headers=headers_of(request))
+        _log(request, "/ocr", resp.status_code, 0, started)
+        return JSONResponse(resp.json(), status_code=resp.status_code)
+    finally:
+        await slot.release()
+
 
 
 def headers_of(request: Request) -> dict:
@@ -190,3 +270,13 @@ def admin_usage(hours: int = 24, limit: int = 50, x_admin_token: str = Header(de
 def admin_keys(x_admin_token: str = Header(default="")):
     _admin(x_admin_token)
     return {"items": store.list_keys()}
+
+
+@app.get("/admin/inflight")
+def admin_inflight(x_admin_token: str = Header(default="")):
+    _admin(x_admin_token)
+    return {
+        "limit_per_key": _concurrency_limit(),
+        "inflight_by_key": dict(_INFLIGHT),
+        "total": sum(_INFLIGHT.values()),
+    }

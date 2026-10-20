@@ -8,17 +8,17 @@
 ## 1. 架构与端口
 
 ```
-浏览器 ──► MME Web            127.0.0.1:8300   （也给内网开放）
+浏览器 ──► MME Web            0.0.0.0:8300   （内网同事用）
               │
-              ├─► 网关        0.0.0.0:8100     API Key / 限流 / 用量统计
-              │     ├─► LLM      127.0.0.1:8010  llama.cpp + qwen2.5-72b
+              ├─► 网关        0.0.0.0:8100     API Key / 限流 / 并发闸门 / 用量统计
+              │     ├─► LLM      127.0.0.1:8010  llama.cpp + qwen2.5-72b（4 槽 ×32K）
               │     ├─► Embed    127.0.0.1:8002  llama.cpp + bge-m3
               │     └─► OCR      127.0.0.1:8101  RapidOCR（CPU）
               │
-              └─► Chroma（嵌入式，./chroma_db）
+              └─► Chroma server 127.0.0.1:8001  （向量库，独立进程）
 ```
 
-**只有 8300（Web）和 8100（网关）对外。** 模型服务一律绑 127.0.0.1，外部系统只能拿到网关发的 `mme-xxx` key。
+**只有 8300（Web）和 8100（网关）对外。** 模型服务与向量库一律绑 127.0.0.1，外部系统只能拿到网关发的 `mme-xxx` key。
 
 | 端口 | 服务 | 绑定 | 说明 |
 |---|---|---|---|
@@ -27,15 +27,17 @@
 | 8010 | LLM | 127.0.0.1 | 只给网关 |
 | 8002 | Embedding | 127.0.0.1 | 只给网关 |
 | 8101 | OCR | 127.0.0.1 | 只给网关 / MME |
+| 8001 | Chroma server | 127.0.0.1 | 只给 MME 本机进程 |
 
 > 本机 8000 被既有 reagent-app（Docker）映射占用，所以 LLM 用 8010。
 > 如果 8000 空出来，把 `.env` 的 `MME_PORT_LLM` 和 `UPSTREAM_LLM` 一起改回 8000 即可。
 
 > **2026-10-20 已完成切换**：原 8000 端口上的 llama-server（PID 38168）已停止，
-> 现由 `start-llm.ps1` 在 **8010** 上运行调优配置（2 槽 ×32K、q8_0 KV、只绑 127.0.0.1）。
+> 现由 `start-llm.ps1` 在 **8010** 上运行调优配置（4 槽 ×32K、q8_0 KV、只绑 127.0.0.1）。
 > 8000 端口已归还给 Docker 的 reagent-app。
 >
 > 要把模型服务给别的项目用，见 [LAN_ACCESS.md](LAN_ACCESS.md)。
+
 
 ---
 
@@ -43,13 +45,13 @@
 
 | 组件 | 模型 | 文件 | 显存/内存 | 备注 |
 |---|---|---|---|---|
-| LLM | Qwen2.5-72B-Instruct Q4_K_M | `D:\models\qwen2.5-72b-instruct-q4_k_m-00001~12.gguf`（44 GB） | ~64 GB 双卡 | 32K 上下文，单路 ~16 tok/s |
+| LLM | Qwen2.5-72B-Instruct Q4_K_M | `D:\models\qwen2.5-72b-instruct-q4_k_m-00001~12.gguf`（44 GB） | ~64 GB 双卡 | 4 槽 ×32K，单路 ~11–16 tok/s |
 | Embedding | bge-m3 FP16 | `D:\models\bge-m3\bge-m3-FP16.gguf`（1.16 GB） | ~2 GB | 1024 维，8192 上下文，**必须 CLS pooling** |
 | OCR | RapidOCR（PP-OCRv4 ONNX） | 随 pip 包装 | CPU | 中英文，300 DPI 渲染 |
 | 运行时 | llama.cpp `0.7.0-dev` build 11696 | `D:\models\llamacpp\bin` | CUDA 12.8 | 驱动 572.83 |
-| 向量库 | Chroma 1.5.9（嵌入式） | `./chroma_db` | 磁盘 | 单 worker |
+| 向量库 | Chroma 1.4.4（server 模式） | `./chroma_db` + `127.0.0.1:8001` | 磁盘 | 独立进程统一调度 |
 
-显存账（2×46 GB = 92 GB）：LLM 权重 44 GB + KV（q8_0，2 槽 ×32K）约 10 GB + 计算缓冲约 6 GB ≈ 60 GB；bge-m3 约 2 GB。余量约 30 GB。
+显存账（2×46 GB = 92 GB）：LLM 权重 44 GB + KV（q8_0，4 槽 ×32K）约 20 GB + 计算缓冲约 6 GB ≈ 70 GB；bge-m3 约 2 GB。实测占用 34.9 + 33.8 = 68.7 GB，余量约 23 GB。
 
 ---
 
@@ -89,13 +91,14 @@ notepad .env        # 参照第 5 节填
 ## 4. 日常启停
 
 ```powershell
-.\deploy\local\start-all.ps1          # 起 Embedding / OCR / 网关 / Web
+.\deploy\local\start-all.ps1          # 起 Embedding / OCR / 网关 / Chroma / Web
 .\deploy\local\start-all.ps1 -WithLlm -Force   # 连 LLM 一起（会重启模型）
-.\deploy\local\status.ps1             # 体检：五个组件 + 鉴权 + 维度
+.\deploy\local\start-chroma.ps1 -Force         # 单独重启向量库服务
+.\deploy\local\status.ps1             # 体检：六个组件 + 鉴权 + 维度
 .\deploy\local\stop-all.ps1           # 按 logs\*.pid 停
 ```
 
-日志都在 `logs\`：`llm.err.log`、`embed.err.log`、`ocr.err.log`、`gateway.err.log`、`web.err.log`。
+日志都在 `logs\`：`llm.err.log`、`embed.err.log`、`ocr.err.log`、`gateway.err.log`、`chroma.err.log`、`web.err.log`。
 
 ### 自检脚本
 
@@ -141,6 +144,13 @@ UPSTREAM_LLM=http://127.0.0.1:8010/v1
 UPSTREAM_EMBED=http://127.0.0.1:8002/v1
 UPSTREAM_OCR=http://127.0.0.1:8101
 GATEWAY_ADMIN_TOKEN=随机串
+GATEWAY_KEY_CONCURRENCY=2     # 同一 Key 最多几个在途请求，0=不限
+
+# 向量库：server 模式（独立进程统一调度，避免多进程抢文件锁）
+CHROMA_MODE=server
+CHROMA_HOST=127.0.0.1
+CHROMA_PORT=8001
+CHROMA_PATH=./chroma_db
 
 # 本机路径/端口（换机器只改这些）
 MME_PORT_WEB=8300
@@ -148,8 +158,11 @@ MME_PORT_GATEWAY=8100
 MME_PORT_OCR=8101
 MME_PORT_EMBED=8002
 MME_PORT_LLM=8010
+MME_PORT_CHROMA=8001
 MME_LLM_BIN=D:\models\llamacpp\bin\llama-server.exe
 MME_LLM_GGUF=D:\models\qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
+MME_LLM_NP=4                  # 并发槽
+MME_LLM_CTX=131072            # 总上下文（每槽 = CTX/NP）
 MME_EMBED_GGUF=D:\models\bge-m3\bge-m3-FP16.gguf
 ```
 
@@ -227,12 +240,13 @@ LLM（`start-llm.ps1`）：
 | 参数 | 本机值 | 作用 |
 |---|---|---|
 | `-ngl 99` | 全量上卡 | 少一层都会掉到 1 tok/s |
-| `-np` | 2 | 并发槽。多槽会让单路变慢，按人数调 |
-| `-c` | 65536（2×32K） | 每槽 32K；再大要改 rope 且模型原生只有 32K |
+| `-np` | 4 | 并发槽。多槽会让单路变慢，按人数调（.env `MME_LLM_NP`） |
+| `-c` | 131072（4×32K） | 每槽 32K；再大要改 rope 且模型原生只有 32K |
 | `--cache-type-k/v q8_0` | 开 | KV 显存减半，配合 `-fa on` |
 | `-t 32` | 32 | 双路 Xeon 6230R（52 线程）留余量给 Web/OCR |
 
-实测：72B Q4 单路 **~16 tok/s**，prompt 处理约 **330 tok/s**（3K 上下文的问答首字 ≈ 10 s）。
+实测（4 槽）：72B Q4 单路 **~11–16 tok/s**，prompt 处理约 **330 tok/s**（3K 上下文的问答首字 ≈ 10 s）。
+4 路并发同时跑时每路约 3 s 出短答，总吞吐约 25–30 tok/s。
 一次投喂里 LLM 要逐块抽取，**30 个分块约 8–12 分钟**，属于正常；批量导入建议放着跑。
 
 Embedding：bge-m3 单条约 10–30 ms（GPU），48 条一批约 1 s。
@@ -251,7 +265,8 @@ OCR：A4 300 DPI 约 2–4 s/页（CPU），扫描件多时是瓶颈，可按需
 | 问答特别慢 | 确认 `-ngl 99` 生效（`nvidia-smi` 显存应占满 ~30 GB/卡） |
 | 扫描件入库失败 | `OCR_BASE_URL` 没配 / OCR 服务没起；投喂进度里会有 `第 N 页 OCR 失败` |
 | 中文乱码 | PowerShell 先 `chcp 65001`；日志按 UTF-8 打开 |
-| `database is locked` | embedded 模式下别开多 worker，`start-web.ps1` 默认 1 |
+| 网关 429（`并发超限`） | 同一个 key 的在途请求超过 `GATEWAY_KEY_CONCURRENCY`；重试或给该项目单独发 key |
+| `database is locked` | 向量库仍是 embedded 模式；跑 `start-chroma.ps1` 并在 `.env` 设 `CHROMA_MODE=server` |
 | 日志里刷 `ConnectionResetError: [WinError 10054]` | Windows 上 asyncio 的已知噪音（客户端/健康检查直接断开连接），不影响功能，可忽略 |
 
 ---
