@@ -1,20 +1,42 @@
-{"q": "Victrex 450G 的长期使用温度是多少？", "expect_source": "demo-peek.txt", "expect_value": "250", "material": "PEEK", "note": "基础数值"}
-{"q": "PEEK 450G 在 200℃ 下的压缩永久变形是多少？", "expect_source": "up-test.txt", "expect_value": "25", "material": "PEEK", "note": "带条件数值"}
-{"q": "CHEMRAZ 640 的最高使用温度？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "290", "material": "FFKM", "note": "最高温度"}
-{"q": "CHEMRAZ 640 的压缩永久变形是多少？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "25", "material": "FFKM", "note": "CS 数值"}
-{"q": "Teflus PR 100 的耐温上限是多少？", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "牌号级数值"}
-{"q": "Teflus PR 90 能耐到多少度？", "expect_source": "PR-200.pdf", "expect_value": "290", "material": "FFKM", "note": "近义问法"}
-{"q": "Teflus PR 80 的使用温度上限？", "expect_source": "PR-200.pdf", "expect_value": "230", "material": "FFKM", "note": "牌号级数值"}
-{"q": "Teflus PR 200 的压缩永久变形是多少？", "expect_source": "PR-200.pdf", "expect_value": "19", "material": "FFKM", "note": "带百分号数值"}
-{"q": "Teflus PR 200 的耐温上限？", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "同文档多记录"}
-{"q": "Daikin X6055B 的最低使用温度？", "expect_source": "sample.txt", "expect_value": "-20", "material": "FFKM", "note": "负数值"}
-{"q": "Daikin X6055B 在 300℃ 老化 70 小时后压缩永久变形是多少？", "expect_source": "sample.txt", "expect_value": "50", "material": "FFKM", "note": "多条件组合"}
-{"q": "Perlast G75M 的温度范围？", "expect_source": "perlast-g-75-m.pdf", "expect_value": "-15", "material": "FFKM", "note": "负数值"}
-{"q": "哪些产品能耐到 315℃？", "expect_source": null, "expect_value": "315", "material": "FFKM", "note": "多产品聚合，只测数值"}
-{"q": "CHEMRAZ 640 的压缩变形测试条件是什么？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "204", "material": "FFKM", "note": "条件字段"}
-{"q": "Victrex 450G 的测试温度是多少？", "expect_source": "up-test.txt", "expect_value": "200", "material": "PEEK", "note": "条件字段"}
-{"q": "压缩永久变形为 25% 的产品有哪些？", "expect_source": null, "expect_value": "25", "material": null, "note": "跨产品筛选"}
-{"q": "Teflus 系列有哪些牌号？", "expect_source": "PR-200.pdf", "expect_value": "PR", "material": "FFKM", "note": "列举类"}
-{"q": "PEEK 和 FFKM 哪种耐温更高？", "expect_source": null, "expect_value": "315", "material": null, "note": "对比类"}
-{"q": "耐温最低的产品是哪个？", "expect_source": null, "expect_value": "-20", "material": null, "note": "极值类"}
-{"q": "全氟醚橡胶和普通氟橡胶有什么区别？", "expect_source": null, "expect_value": null, "material": null, "note": "开放问题，只测检索"}
+{"q": "Victrex 450G 的长期使用温度是多少？", "category": "单产品", "expect_source": "demo-peek.txt", "expect_value": "250", "material": "PEEK", "note": "基础数值"}
+{"q": "PEEK 450G 在 200℃ 下的压缩永久变形是多少？", "category": "条件", "expect_source": "up-test.txt", "expect_value": "25", "material": "PEEK", "note": "带条件数值"}
+{"q": "CHEMRAZ 640 的最高使用温度？", "category": "单产品", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "290", "material": "FFKM", "note": "最高温度"}
+{"q": "CHEMRAZ 640 的压缩永久变形是多少？", "category": "单产品", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "25", "material": "FFKM", "note": "CS 数值"}
+{"q": "CHEMRAZ 640 的最低使用温度是多少？", "category": "单产品", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "-20", "material": "FFKM", "note": "负数值"}
+{"q": "CHEMRAZ 640 的压缩变形测试温度？", "category": "条件", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "204", "material": "FFKM", "note": "条件字段"}
+{"q": "Teflus PR 100 的耐温上限是多少？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "牌号级数值"}
+{"q": "Teflus PR 90 能耐到多少度？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "290", "material": "FFKM", "note": "近义问法"}
+{"q": "Teflus PR 80 的使用温度上限？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "230", "material": "FFKM", "note": "牌号级数值"}
+{"q": "Teflus PR 85H 能耐受的最高温度？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "230", "material": "FFKM", "note": "同页多牌号干扰"}
+{"q": "Teflus PR 91B 的耐温上限？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "270", "material": "FFKM", "note": "同页多牌号干扰"}
+{"q": "Teflus PR 120B 最高使用温度？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "300", "material": "FFKM", "note": "同页多牌号干扰"}
+{"q": "Teflus PR 200 的耐温上限？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "跨页记录"}
+{"q": "Teflus PR 200 的压缩永久变形是多少？", "category": "单产品", "expect_source": "PR-200.pdf", "expect_value": "19", "material": "FFKM", "note": "带百分号数值"}
+{"q": "Daikin X6055B 的最低使用温度？", "category": "单产品", "expect_source": "sample.txt", "expect_value": "-20", "material": "FFKM", "note": "负数值"}
+{"q": "Daikin X6055B 在 300℃ 老化 70 小时后压缩永久变形是多少？", "category": "条件", "expect_source": "sample.txt", "expect_value": "50", "material": "FFKM", "note": "多条件组合"}
+{"q": "Perlast G75M 的温度范围？", "category": "单产品", "expect_source": "perlast-g-75-m.pdf", "expect_value": "-15", "material": "FFKM", "note": "曾因抽取缺失答错"}
+{"q": "Perlast G75M 能耐到多少度？", "category": "单产品", "expect_source": "perlast-g-75-m.pdf", "expect_value": "260", "material": "FFKM", "note": "上限值"}
+{"q": "Daikin X6055B 的测试介质是什么？", "category": "条件", "expect_source": "sample.txt", "expect_value": "plasma", "material": "FFKM", "note": "介质字段"}
+{"q": "Victrex 450G 的测试温度是多少？", "category": "条件", "expect_source": "up-test.txt", "expect_value": "200", "material": "PEEK", "note": "条件字段"}
+{"q": "Teflus PR 200 压缩变形的测试温度？", "category": "条件", "expect_source": "PR-200.pdf", "expect_value": "290", "material": "FFKM", "note": "条件绑定"}
+{"q": "PEEK 和 FFKM 哪种耐温更高？", "category": "对比", "expect_source": null, "expect_value": "315", "material": null, "note": "跨材质对比"}
+{"q": "CHEMRAZ 640 和 Teflus PR 100 哪个耐温更高？", "category": "对比", "expect_source": null, "expect_value": "315", "material": "FFKM", "note": "同材质对比"}
+{"q": "Teflus PR 80 和 PR 100 哪个使用温度更高？", "category": "对比", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "同系列对比"}
+{"q": "Victrex 450G 和 CHEMRAZ 640 哪个耐温更高？", "category": "对比", "expect_source": null, "expect_value": "290", "material": null, "note": "跨材质对比"}
+{"q": "这些产品里压缩永久变形最低的是哪个？", "category": "对比", "expect_source": null, "expect_value": "19", "material": null, "note": "数值极值"}
+{"q": "哪些产品能耐到 315℃？", "category": "聚合", "expect_source": null, "expect_value": "315", "material": "FFKM", "note": "多产品聚合"}
+{"q": "哪些产品的耐温上限超过 300℃？", "category": "聚合", "expect_source": null, "expect_value": "315", "material": "FFKM", "note": "阈值筛选"}
+{"q": "耐温最低的产品是哪个？", "category": "聚合", "expect_source": null, "expect_value": "-20", "material": null, "note": "极值类"}
+{"q": "Teflus 系列有哪些牌号？", "category": "聚合", "expect_source": "PR-200.pdf", "expect_value": "PR", "material": "FFKM", "note": "列举类"}
+{"q": "压缩永久变形为 25% 的产品有哪些？", "category": "聚合", "expect_source": null, "expect_value": "25", "material": null, "note": "跨产品筛选"}
+{"q": "有哪些全氟醚橡胶产品？", "category": "聚合", "expect_source": null, "expect_value": "全氟醚", "material": "FFKM", "note": "材质筛选"}
+{"q": "哪些产品的温度下限是 -10℃？", "category": "聚合", "expect_source": "PR-200.pdf", "expect_value": "-10", "material": "FFKM", "note": "下限筛选"}
+{"q": "PEEK 类产品有哪些？", "category": "聚合", "expect_source": null, "expect_value": "450G", "material": "PEEK", "note": "材质筛选"}
+{"q": "全氟醚橡胶和普通氟橡胶有什么区别？", "category": "开放", "expect_source": null, "expect_value": null, "material": null, "note": "概念解释"}
+{"q": "半导体设备为什么选用 FFKM 密封件？", "category": "开放", "expect_source": null, "expect_value": null, "material": null, "note": "场景解释"}
+{"q": "压缩永久变形这个指标意味着什么？", "category": "开放", "expect_source": null, "expect_value": null, "material": null, "note": "指标解释"}
+{"q": "这些数据分别来自哪些资料？", "category": "开放", "expect_source": null, "expect_value": null, "material": null, "note": "来源追溯"}
+{"q": "CHEMRAZ 640 的密度是多少？", "category": "无答案", "expect_source": null, "expect_value": null, "expect_refusal": true, "material": "FFKM", "note": "资料中无密度"}
+{"q": "Teflus PR 200 的硬度是多少？", "category": "无答案", "expect_source": null, "expect_value": null, "expect_refusal": true, "material": "FFKM", "note": "资料中无硬度"}
+{"q": "Victrex 450G 的拉伸强度是多少？", "category": "无答案", "expect_source": null, "expect_value": null, "expect_refusal": true, "material": "PEEK", "note": "资料中无拉伸强度"}
+{"q": "这些产品的价格是多少？", "category": "无答案", "expect_source": null, "expect_value": null, "expect_refusal": true, "material": null, "note": "资料中无价格"}

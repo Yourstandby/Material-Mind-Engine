@@ -123,9 +123,16 @@ def _grade_bonus(question: str, meta: dict) -> int:
         name = meta.get(key)
         if not name:
             continue
-        token = re.sub(r"[\s\-_]+", "", str(name).lower()).replace("®", "")
-        if len(token) >= 3 and token in q:
-            best = max(best, 100 + len(token))
+        raw = re.sub(r"[®™]", "", str(name)).strip()
+        words = raw.split()
+        candidates = {raw}
+        for n in (1, 2, 3):  # 同时匹配省略品牌前缀的写法：PR 100 / 100
+            if len(words) >= n:
+                candidates.add(" ".join(words[-n:]))
+        for cand in candidates:
+            token = re.sub(r"[\s\-_]+", "", cand.lower())
+            if len(token) >= 3 and token in q:
+                best = max(best, 100 + len(token))
     return best
 
 
