@@ -92,7 +92,12 @@ function Stop-PidFile {
     if ($pidValue -and ($pidValue -match '^\d+$')) {
         $process = Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue
         if ($process) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            # 连子进程一起杀：chroma 等入口会 fork 出 python 子进程，只杀父进程会留孤儿占着端口
+            & taskkill.exe /F /T /PID $pidValue 2>&1 | Out-Null
+            Start-Sleep -Milliseconds 400
+            if (Get-Process -Id ([int]$pidValue) -ErrorAction SilentlyContinue) {
+                Stop-Process -Id ([int]$pidValue) -Force -ErrorAction SilentlyContinue
+            }
             Write-Host "   已停止 $($process.ProcessName) (PID $pidValue)" -ForegroundColor Green
         }
     }
