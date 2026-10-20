@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Material Mind Engine</title>
+<style>
+  :root {
+    --paper: #f7f6f3; --surface: #ffffff; --ink: #14130f; --ink-2: #3d3b35;
+    --muted: #8a8579; --rule: #e4e1d8; --rule-strong: #d3cfc3;
+    --accent: #c2410c; --danger: #b42318;
+    --sans: "Inter", "HarmonyOS Sans SC", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    --serif: "Iowan Old Style", "Source Serif 4", "Songti SC", Georgia, serif;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: var(--paper); color: var(--ink); font-family: var(--sans); padding: 24px 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: min(410px, calc(100vw - 40px)); background: var(--surface);
+    border: 1px solid var(--rule); border-radius: 6px; padding: 34px 32px 26px;
+  }
+  .mark { display: flex; align-items: center; gap: 9px; margin-bottom: 20px; }
+  .mark i { width: 10px; height: 10px; background: var(--accent); border-radius: 2px; transform: rotate(45deg); }
+  .mark span { font-family: var(--mono); font-size: 9px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase; }
+  h1 { font-family: var(--serif); font-weight: 400; font-size: 27px; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .sub { margin: 0 0 20px; font-size: 12.5px; color: var(--muted); line-height: 1.75; }
+
+  .firstrun {
+    display: none; margin-bottom: 18px; padding: 11px 13px; border-radius: 4px;
+    background: #fdf3ec; border: 1px solid #f0d3bf; color: #8a3b10; font-size: 12px; line-height: 1.7;
+  }
+  .firstrun.on { display: block; }
+
+  .tabs { display: flex; gap: 28px; margin-bottom: 20px; border-bottom: 1px solid var(--rule); }
+  .tabs button {
+    font: inherit; font-size: 13.5px; color: var(--muted); background: none; border: 0;
+    border-bottom: 2px solid transparent; padding: 0 0 10px; cursor: pointer;
+    margin-bottom: -1px; transition: color .14s, border-color .14s;
+  }
+  .tabs button:hover { color: var(--ink-2); }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+
+  label { display: block; margin-bottom: 14px; }
+  label span {
+    display: block; margin-bottom: 5px; font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  }
+  input {
+    width: 100%; font: inherit; font-size: 13.5px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--rule-strong);
+    border-radius: 4px; padding: 9px 11px; transition: border-color .14s, background .14s;
+  }
+  input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+  .cta {
+    width: 100%; margin-top: 4px; font: inherit; font-size: 13px; color: #fff;
+    background: var(--ink); border: 1px solid var(--ink); border-radius: 4px;
+    padding: 10px; cursor: pointer; transition: background .14s, transform .1s;
+  }
+  .cta:hover { background: #26241d; }
+  .cta:active { transform: scale(0.995); }
+  .cta:disabled { opacity: .55; cursor: default; }
+  .msg { min-height: 18px; margin-top: 12px; font-size: 12px; color: var(--danger); line-height: 1.6; }
+  .msg.ok { color: #15803d; }
+
+  .switch {
+    margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--rule);
+    font-size: 12px; color: var(--muted); text-align: center;
+  }
+  .switch button {
+    font: inherit; font-size: 12px; color: var(--accent); background: none; border: 0;
+    padding: 0 2px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px;
+  }
+  .hint { margin-top: 10px; font-size: 11px; color: var(--muted); line-height: 1.7; text-align: center; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<form class="card" id="form" autocomplete="on">
+  <div class="mark"><i></i><span>Material Mind Engine</span></div>
+  <h1 id="title">登录</h1>
+  <p class="sub">内部资料库，仅限在职成员访问。原文与数据不对外公开。</p>
+
+  <div class="firstrun" id="firstrun">
+    <strong>系统还没有任何账号。</strong><br>请先创建管理员账号，之后同事注册需要邀请码。
+  </div>
+
+  <div class="tabs" id="tabs">
+    <button type="button" class="on" data-mode="login">登录</button>
+    <button type="button" data-mode="register">注册</button>
+  </div>
+
+  <label><span>用户名</span><input id="username" name="username" autocomplete="username" required></label>
+  <label><span>密码</span><input id="password" name="password" type="password" autocomplete="current-password" required></label>
+  <label id="inviteRow" class="hidden"><span>邀请码</span><input id="invite" name="invite" autocomplete="off"></label>
+
+  <button class="cta" id="submit" type="submit">进入</button>
+  <div class="msg" id="msg"></div>
+
+  <div class="switch" id="switch">还没有账号？<button type="button" id="toRegister">立即注册</button></div>
+  <div class="hint" id="hint"></div>
+</form>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const form = $("form"), msg = $("msg"), hint = $("hint"), switchRow = $("switch");
+const inviteRow = $("inviteRow"), title = $("title"), submit = $("submit");
+let mode = "login";
+let hasUsers = true;
+
+function setMode(next, silent) {
+  mode = next;
+  document.querySelectorAll("#tabs button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.mode === mode)
+  );
+  inviteRow.classList.toggle("hidden", mode !== "register" || !hasUsers);
+  title.textContent = mode === "login" ? "登录" : hasUsers ? "注册" : "创建管理员账号";
+  submit.textContent = mode === "login" ? "进入" : "创建账号";
+  $("password").autocomplete = mode === "login" ? "current-password" : "new-password";
+  switchRow.classList.toggle("hidden", mode === "register" && !hasUsers);
+  switchRow.innerHTML =
+    mode === "login"
+      ? '还没有账号？<button type="button" id="toRegister">立即注册</button>'
+      : '已有账号？<button type="button" id="toLogin">去登录</button>';
+  const target = mode === "login" ? $("toRegister") : $("toLogin");
+  if (target) target.addEventListener("click", () => setMode(mode === "login" ? "register" : "login"));
+  hint.textContent = !hasUsers
+    ? "第一个账号自动成为管理员，无需邀请码。"
+    : mode === "register"
+      ? "注册需要管理员提供的邀请码。"
+      : "";
+  if (!silent) msg.textContent = "";
+}
+
+document.querySelectorAll("#tabs button").forEach((btn) =>
+  btn.addEventListener("click", () => setMode(btn.dataset.mode))
+);
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  msg.className = "msg";
+  msg.textContent = "";
+  submit.disabled = true;
+  const label = submit.textContent;
+  submit.textContent = "处理中…";
+  try {
+    const res = await fetch(`/api/auth/${mode}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: $("username").value.trim(),
+        password: $("password").value,
+        invite: $("invite").value.trim(),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || "请求失败");
+    location.href = "/";
+  } catch (err) {
+    msg.textContent = err.message;
+    submit.disabled = false;
+    submit.textContent = label;
+  }
+});
+
+fetch("/api/auth/me")
+  .then((r) => r.json())
+  .then((d) => {
+    if (d.user) {
+      location.href = "/";
+      return;
+    }
+    hasUsers = !!d.has_users;
+    $("firstrun").classList.toggle("on", !hasUsers);
+    setMode(hasUsers ? "login" : "register", true);
+  })
+  .catch(() => setMode("login", true));
+</script>
+</body>
+</html>

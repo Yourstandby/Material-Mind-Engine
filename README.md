@@ -68,6 +68,20 @@ python -m pytest tests/
 | OPENAI_API_KEY | LLM API 密钥 |
 | OPENAI_BASE_URL | LLM 兼容接口地址 |
 | LLM_MODEL | 模型名（如 deepseek-chat） |
+| EMBEDDING_BASE_URL | 向量化接口地址（OpenAI 兼容） |
+| EMBEDDING_API_KEY | 向量化密钥 |
+| EMBEDDING_MODEL | 向量化模型名（如 bge-m3） |
+| CHROMA_MODE | `embedded`（默认）或 `server` |
+| CHROMA_HOST / CHROMA_PORT | server 模式下的 Chroma 地址 |
+| INVITE_CODE | 注册邀请码（首个账号免码） |
+| UPSTREAM_LLM | 网关的上游模型地址 |
+| GATEWAY_ADMIN_TOKEN | 网关管理接口令牌 |
+
+## 部署
+
+- 服务器安装：[deploy/DEPLOY.md](deploy/DEPLOY.md)（一键脚本 `deploy/install.ps1`）
+- 自托管模型（LLM / Embedding / OCR）：[docs/SELFHOST_MODELS.md](docs/SELFHOST_MODELS.md)
+- 模型统一经 `gateway/` 暴露：API Key + 限速 + 用量统计
 
 ## 许可证
 

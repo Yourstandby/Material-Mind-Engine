@@ -20,7 +20,7 @@ const EXAMPLES = {
   ],
 };
 
-const state = { collections: [], active: "materials", busy: false, controller: null };
+const state = { collections: [], active: "all", busy: false, controller: null };
 
 /* ───────── 工具 ───────── */
 
@@ -234,6 +234,9 @@ function renderSources(container, items) {
     items
       .map((s) => {
         const conf = typeof s.confidence === "number" ? Math.round(s.confidence * 100) : null;
+        const href = s.doc_id
+          ? `/api/files/${s.doc_id}${s.page ? `#page=${s.page}` : ""}`
+          : "";
         const preview =
           (s.fields.find((f) => f.key === "temp_range") ||
             s.fields.find((f) => f.key === "cs") ||
@@ -255,6 +258,7 @@ function renderSources(container, items) {
             <span class="src-key">${esc(String(preview))}</span>
             <span class="src-right">
               ${conf !== null ? `<span class="conf" title="置信度 ${conf}%"><i style="width:${conf}%"></i></span>` : ""}
+              ${href ? `<a class="src-link" href="${esc(href)}" target="_blank" rel="noopener" title="打开原文${s.page ? ` 第 ${s.page} 页` : ""}">原文</a>` : ""}
               ${s.url ? `<a class="src-link" href="${esc(s.url)}" target="_blank" rel="noopener" title="打开原始来源">↗</a>` : ""}
               <span class="src-chev">${icon("chevronRight", 13)}</span>
             </span>
@@ -328,7 +332,8 @@ function ingestOne(file) {
 
   const form = new FormData();
   form.append("file", file);
-  form.append("collection", state.active);
+  form.append("collection", "catalog");
+  form.append("material", state.active);
 
   return fetch("/api/ingest", { method: "POST", body: form })
     .then(async (res) => {
@@ -457,7 +462,7 @@ async function ask(question) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, collection: state.active }),
+      body: JSON.stringify({ question: q, material: state.active }),
       signal: state.controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -712,6 +717,114 @@ async function boot() {
   renderNav();
   renderChips();
   setActive(state.active);
+}
+
+const acctBtn = document.getElementById("acctBtn");
+const acctModal = document.getElementById("acctModal");
+if (acctBtn && acctModal) {
+  const msgEl = () => document.getElementById("acctMsg");
+  const closeAcct = () => {
+    acctModal.hidden = true;
+    ["pwOld", "pwNew", "pwNew2"].forEach((id) => (document.getElementById(id).value = ""));
+    msgEl().textContent = "";
+  };
+
+  acctBtn.addEventListener("click", async () => {
+    acctModal.hidden = false;
+    guessUser().then((name) => {
+      document.getElementById("acctWho").textContent = name ? `当前账号：${name}` : "";
+    });
+    loadAcctUsers();
+    document.getElementById("pwOld").focus();
+  });
+  document.getElementById("acctClose").addEventListener("click", closeAcct);
+  acctModal.addEventListener("click", (event) => {
+    if (event.target === acctModal) closeAcct();
+  });
+
+  const resetBtn = document.getElementById("acctReset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", async () => {
+      const note = document.getElementById("acctNote");
+      const uid = document.getElementById("acctUserSel").value;
+      const pw = document.getElementById("acctNewPw").value;
+      if (pw.length < 8) return (note.textContent = "密码至少 8 位");
+      note.textContent = "重置中…";
+      try {
+        const res = await fetch(`/api/users/${uid}/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: pw }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "重置失败");
+        note.textContent = "已重置，该成员需重新登录";
+        document.getElementById("acctNewPw").value = "";
+      } catch (err) {
+        note.textContent = err.message;
+      }
+    });
+  }
+
+  document.getElementById("pwSave").addEventListener("click", async () => {
+    const oldPw = document.getElementById("pwOld").value;
+    const next = document.getElementById("pwNew").value;
+    const again = document.getElementById("pwNew2").value;
+    if (next.length < 8) return (msgEl().textContent = "新密码至少 8 位");
+    if (next !== again) return (msgEl().textContent = "两次输入不一致");
+    msgEl().textContent = "保存中…";
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ old: oldPw, new: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "保存失败");
+      msgEl().textContent = "已更新，其他设备需重新登录";
+      setTimeout(closeAcct, 1400);
+    } catch (err) {
+      msgEl().textContent = err.message;
+    }
+  });
+}
+
+async function guessUser() {
+  try {
+    const data = await (await fetch("/api/auth/me")).json();
+    if (!data.user) return "";
+    return `${data.user.username}（${data.user.role === "admin" ? "管理员" : "成员"}）`;
+  } catch (e) {
+    return "";
+  }
+}
+
+async function loadAcctUsers() {
+  const box = document.getElementById("acctAdmin");
+  const select = document.getElementById("acctUserSel");
+  if (!box || !select) return;
+  try {
+    const me = await (await fetch("/api/auth/me")).json();
+    if (!me.user || me.user.role !== "admin") {
+      box.hidden = true;
+      return;
+    }
+    const data = await (await fetch("/api/users")).json();
+    select.innerHTML = (data.items || [])
+      .map((u) => `<option value="${u.id}">${esc(u.username)}（${u.role === "admin" ? "管理员" : "成员"}）</option>`)
+      .join("");
+    box.hidden = false;
+  } catch (e) {
+    box.hidden = true;
+  }
+}
+
+const logoutBtn = document.getElementById("logoutBtn");
+if (logoutBtn) {
+  logoutBtn.addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    location.href = "/login";
+  });
 }
 
 boot();

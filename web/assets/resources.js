@@ -40,7 +40,7 @@ async function loadSources() {
   const meta = document.getElementById("resMeta");
   meta.textContent = "加载中…";
   try {
-    const res = await fetch(`/api/sources?collection=${encodeURIComponent(resState.collection)}`);
+    const res = await fetch(`/api/library?material=${encodeURIComponent(resState.collection)}`);
     const data = await res.json();
     resState.sources = data.items || [];
     const alive = new Set(resState.sources.map(keyOf));
@@ -79,10 +79,10 @@ function renderSeg() {
 function visibleSources() {
   const q = resState.filter.trim().toLowerCase();
   if (!q) return resState.sources;
-  return resState.sources.filter(
-    (item) =>
-      item.source.toLowerCase().includes(q) ||
-      (item.grades || []).some((g) => g.toLowerCase().includes(q))
+  return resState.sources.filter((item) =>
+    [item.title, item.source, item.original_name, item.authors, item.publisher, item.patent_no, item.doi]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(q))
   );
 }
 
@@ -91,9 +91,21 @@ function confidenceCell(value) {
   return `<span class="conf-cell"><span class="conf-mini"><i style="width:${pct}%"></i></span><em>${pct}%</em></span>`;
 }
 
+const TYPE_LABEL = { patent: "专利", paper: "论文", standard: "标准", datasheet: "数据表", report: "报告", manual: "手册", other: "其他" };
+
+function typeBadge(type) {
+  const key = TYPE_LABEL[type] ? type : "other";
+  return `<span class="type t-${key}">${TYPE_LABEL[key]}</span>`;
+}
+
+function materialBadge(code) {
+  if (!code) return "";
+  return `<span class="type t-material">${esc(code)}</span>`;
+}
+
 function renderResList() {
   const list = visibleSources();
-  const total = list.reduce((sum, item) => sum + item.records, 0);
+  const total = list.reduce((sum, item) => sum + (item.records || 0), 0);
   const all = resState.sources;
   document.getElementById("resMeta").textContent = list.length
     ? `${list.length} 份资料 · ${total} 条记录${resState.filter ? ` · 共 ${all.length} 份` : ""}`
@@ -116,33 +128,56 @@ function renderResList() {
   host.innerHTML = `
     <div class="res-table">
       <div class="res-row res-head">
-        <span></span><span>来源</span><span>库</span><span class="num">记录</span><span class="conf-col">置信度</span><span></span>
+        <span></span><span>标题 / 文件</span><span>类型</span><span class="num">年份</span><span class="num">记录</span><span></span>
       </div>
-      ${list
-        .map((item, index) => {
-          const grades = (item.grades || []).join(" · ");
-          const pages = (item.pages || []).length;
-          const sub = [grades, pages > 1 ? `${pages} 页` : ""].filter(Boolean).join(" · ");
+      ${(() => {
+        const counts = new Map();
+        list.forEach((item) => {
+          const key = item.product_id || item.source;
+          counts.set(key, (counts.get(key) || 0) + 1);
+        });
+        const ordered = [...list].sort((a, b) =>
+          String(a.product_name || a.source).localeCompare(String(b.product_name || b.source))
+        );
+        const rows = [];
+        let current = null;
+        ordered.forEach((item) => {
+          const key = item.product_id || item.source;
+          if (key !== current) {
+            current = key;
+            rows.push(`<div class="res-group">
+              <span class="g-name">${esc(item.product_name || "未关联产品")}</span>
+              ${materialBadge(item.material)}
+              <span class="g-meta">${esc(item.supplier || "")}${
+              item.supplier ? " · " : ""
+            }${counts.get(key)} 份文件</span>
+            </div>`);
+          }
+          const index = list.indexOf(item);
           const on = resState.selected.has(keyOf(item));
-          return `<div class="res-row" data-i="${index}">
+          const sub = [item.authors || item.publisher, item.patent_no || item.doi]
+            .filter(Boolean)
+            .join(" · ");
+          rows.push(`<div class="res-row" data-i="${index}">
             <span class="pick${on ? " on" : ""}" data-pick="${index}" role="checkbox" aria-checked="${on}" tabindex="0">${
             on ? icon("check", 11) : ""
           }</span>
             <div class="res-name">
               <span class="ext">${esc(item.kind || "file")}</span>
-              <span class="file" title="${esc(item.source)}">${esc(item.source)}</span>
-              <span class="sub">${esc(sub)}</span>
+              <span class="file" title="${esc(item.source)}">${esc(item.title || item.source)}</span>
+              <span class="sub">${esc(sub || item.original_name || "")}</span>
             </div>
-            <span class="lib">${esc(labelOf(item.collection))}</span>
-            <span class="num">${item.records}</span>
-            ${confidenceCell(item.avg_confidence)}
+            ${typeBadge(item.doc_type)}
+            <span class="num year">${item.year || "—"}</span>
+            <span class="num recs">${item.records || 0}</span>
             <button class="row-more" type="button" aria-label="查看"><span class="ico">${icon(
               "chevronRight",
               15
             )}</span></button>
-          </div>`;
-        })
-        .join("")}
+          </div>`);
+        });
+        return rows.join("");
+      })()}
     </div>`;
 
   host.querySelectorAll(".res-row[data-i]").forEach((row) =>
@@ -182,18 +217,149 @@ function renderBulk() {
 
 /* ───────── 抽屉 ───────── */
 
+function metaForm(item) {
+  const options = Object.entries(TYPE_LABEL)
+    .map(
+      ([key, label]) =>
+        `<option value="${key}"${item.doc_type === key ? " selected" : ""}>${label}</option>`
+    )
+    .join("");
+  return `<form class="doc-meta" id="docMeta" autocomplete="off" onsubmit="return false">
+    <div class="doc-meta-head"><span>文献信息</span><span class="doc-hint">${esc(
+      item.canonical_name || ""
+    )}</span></div>
+    <label class="mfield wide"><span>标题</span><input id="mTitle" value="${esc(
+      item.title || ""
+    )}"></label>
+    <div class="mrow">
+      <label class="mfield"><span>类型</span><select id="mDocType">${options}</select></label>
+      <label class="mfield"><span>年份</span><input id="mYear" type="number" min="1900" max="2035" value="${esc(
+        item.year || ""
+      )}"></label>
+    </div>
+    <div class="mrow">
+      <label class="mfield"><span>作者 / 发明人</span><input id="mAuthors" value="${esc(
+        item.authors || ""
+      )}"></label>
+      <label class="mfield"><span>机构 / 供应商</span><input id="mPublisher" value="${esc(
+        item.publisher || ""
+      )}"></label>
+    </div>
+    <div class="mrow">
+      <label class="mfield"><span>DOI</span><input id="mDoi" value="${esc(item.doi || "")}"></label>
+      <label class="mfield"><span>专利号</span><input id="mPatent" value="${esc(
+        item.patent_no || ""
+      )}"></label>
+    </div>
+    <label class="mfield wide"><span>标签（逗号分隔）</span><input id="mTags" value="${esc(
+      (item.tags || []).join(", ")
+    )}"></label>
+    <div class="doc-meta-foot">
+      <span class="meta-hint">原始文件：${esc(item.original_name || "")}</span>
+      <button class="btn-ghost" type="button" id="metaRename"><span class="ico">${icon(
+        "refresh",
+        13
+      )}</span>规范命名</button>
+      <button class="btn-primary" type="button" id="metaSave">保存</button>
+    </div>
+  </form>`;
+}
+
+function bindMetaForm(item) {
+  const save = document.getElementById("metaSave");
+  const rename = document.getElementById("metaRename");
+  if (save) save.addEventListener("click", () => saveMeta(item));
+  if (rename) rename.addEventListener("click", () => renameDoc(item));
+}
+
+async function saveMeta(item) {
+  const value = (id) => (document.getElementById(id) || {}).value || "";
+  const year = Number(value("mYear"));
+  const payload = {
+    title: value("mTitle").trim(),
+    authors: value("mAuthors").trim(),
+    year: Number.isFinite(year) && year > 0 ? year : null,
+    doc_type: value("mDocType"),
+    publisher: value("mPublisher").trim(),
+    doi: value("mDoi").trim(),
+    patent_no: value("mPatent").trim(),
+    tags: value("mTags")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  };
+
+  const btn = document.getElementById("metaSave");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "保存中…";
+  try {
+    const res = await fetch(`/api/library/${encodeURIComponent(item.doc_id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "保存失败");
+    resState.current = { ...item, ...data };
+    document.getElementById("drawerTitle").textContent = data.title || item.source;
+    document.getElementById("drawerSub").textContent = `${data.records || 0} 条记录 · ${labelOf(
+      data.collection
+    )} · ${data.source}`;
+    btn.textContent = "已保存";
+    await loadSources();
+  } catch (err) {
+    btn.textContent = `失败：${err.message}`;
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => (btn.textContent = label), 2000);
+  }
+}
+
+async function renameDoc(item) {
+  const btn = document.getElementById("metaRename");
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = "重命名中…";
+  try {
+    const res = await fetch(`/api/library/${encodeURIComponent(item.doc_id)}/rename`, {
+      method: "POST",
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "重命名失败");
+    btn.textContent = data.renamed ? "已重命名" : "已是规范命名";
+    await loadSources();
+    if (data.doc) openDrawer(data.doc);
+  } catch (err) {
+    btn.textContent = `失败：${err.message}`;
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => (btn.innerHTML = label), 2000);
+  }
+}
+
 async function openDrawer(item) {
   if (!item) return;
   resState.current = item;
   document.getElementById("drawer").hidden = false;
-  document.getElementById("drawerTitle").textContent = item.source;
-  document.getElementById("drawerSub").textContent = `${item.records} 条记录 · 来自 ${labelOf(
+  document.getElementById("drawerTitle").textContent = item.title || item.source;
+  document.getElementById("drawerSub").textContent = `${item.records || 0} 条记录 · ${labelOf(
     item.collection
-  )}`;
+  )} · ${item.source}`;
+
+  const open = document.getElementById("drawerOpen");
+  if (open) {
+    open.hidden = !item.doc_id;
+    open.href = item.doc_id ? `/api/files/${item.doc_id}` : "#";
+  }
 
   const body = document.getElementById("drawerBody");
-  body.innerHTML = `<div class="skel"></div><div class="skel"></div><div class="skel"></div>`;
+  body.innerHTML =
+    metaForm(item) +
+    `<div class="doc-records" id="docRecords"><div class="skel"></div><div class="skel"></div></div>`;
+  bindMetaForm(item);
 
+  const host = document.getElementById("docRecords");
   try {
     const res = await fetch(
       `/api/sources/records?collection=${encodeURIComponent(
@@ -203,11 +369,11 @@ async function openDrawer(item) {
     const data = await res.json();
     const rows = data.items || [];
     if (!rows.length) {
-      body.innerHTML = `<div class="res-empty-sub">没有可展示的记录</div>`;
+      host.innerHTML = `<div class="res-empty-sub">没有可展示的记录</div>`;
       return;
     }
 
-    body.innerHTML = rows
+    host.innerHTML = rows
       .map((record) => {
         const conf = Math.round((Number(record.confidence) || 0) * 100);
         const fields = (record.fields || [])
@@ -236,7 +402,7 @@ async function openDrawer(item) {
       })
       .join("");
   } catch (err) {
-    body.innerHTML = `<div class="res-empty-sub">${esc(err.message)}</div>`;
+    host.innerHTML = `<div class="res-empty-sub">${esc(err.message)}</div>`;
   }
 }
 

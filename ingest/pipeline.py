@@ -11,8 +11,10 @@ from pathlib import Path
 
 import chromadb
 
-from core import embeddings
+from core import catalog, embeddings
+from core import vector_store as vs
 from core.config import env
+from ingest import metadata, repo
 from ingest.chunk import split
 from ingest.extract import extract
 from ingest.parse import parse
@@ -35,15 +37,30 @@ def serialize(record: dict) -> str:
     return "\n".join(f"{k}: {v}" for k, v in record.items() if v not in (None, "", [], {}))
 
 
-def _meta(record: dict) -> dict:
-    return {k: v for k, v in record.items() if isinstance(v, (str, int, float, bool))}
+def _meta(record: dict, doc_id: str = "") -> dict:
+    meta = {k: v for k, v in record.items() if isinstance(v, (str, int, float, bool))}
+    if doc_id:
+        meta["doc_id"] = doc_id
+    supplier = str(record.get("supplier") or "")
+    grade = str(record.get("grade") or record.get("grade_raw") or "")
+    material = catalog.material_of(str(record.get("composition") or ""), grade)
+    meta["product_id"] = catalog.product_key(supplier, grade)
+    meta["product_name"] = catalog.product_name(supplier, grade)
+    meta["material"] = material
+    meta["material_label"] = catalog.material_label(material)
+    return meta
 
 
-def _client() -> chromadb.ClientAPI:
-    return chromadb.PersistentClient(path=env("CHROMA_PATH", "./chroma_db"))
+def _locate(collection: str, filename: str) -> str:
+    path = Path("inbox") / "_done" / collection / Path(filename).name
+    return str(path) if path.exists() else ""
 
 
-def ingest(filename: str, data: bytes, collection: str = "materials"):
+def _client():
+    return vs.client()
+
+
+def ingest(filename: str, data: bytes, collection: str = "catalog", material_hint: str = ""):
     """生成器：逐条抛出进度事件。"""
     if not embeddings.ready():
         yield {"type": "error", "message": "未配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL，无法入库"}
@@ -65,6 +82,8 @@ def ingest(filename: str, data: bytes, collection: str = "materials"):
     if not doc["pages"]:
         yield {"type": "error", "message": "没有解析出任何文本（可能是扫描件，需要 OCR）"}
         return
+
+    did = repo.doc_id(data)
 
     chunks = []
     for page in doc["pages"]:
@@ -113,6 +132,10 @@ def ingest(filename: str, data: bytes, collection: str = "materials"):
         else:
             keep.append(record)
 
+    doc_meta = metadata.extract(
+        filename, data, doc["pages"], suppliers=[r.get("supplier") for r in keep]
+    )
+
     yield {"type": "stage", "stage": "embed", "records": len(keep)}
     documents = [serialize(r) for r in keep]
     ids = [hashlib.md5(d.encode()).hexdigest() for d in documents]
@@ -139,14 +162,37 @@ def ingest(filename: str, data: bytes, collection: str = "materials"):
         yield {"type": "error", "message": f"向量化失败: {exc}"}
         return
 
-    store.upsert(ids=ids, documents=documents, metadatas=[_meta(r) for r in keep], embeddings=vectors)
+    store.upsert(
+        ids=ids,
+        documents=documents,
+        metadatas=[_meta(r, did) for r in keep],
+        embeddings=vectors,
+    )
     if not known:  # 旧库没有元数据时补写，防止查询回退到默认嵌入
         try:
             store.modify(metadata={"embedding_model": model})
         except Exception:
             pass
+    try:
+        entry = repo.register(
+            data=data,
+            filename=filename,
+            collection=collection,
+            pages=len(doc["pages"]),
+            chars=chars,
+            records=len(keep),
+            meta=doc_meta,
+            path=_locate(collection, filename),
+        )
+    except Exception as exc:  # 登记失败不应影响入库
+        _log(f"  文献登记失败: {exc}")
+        entry = None
+
     for record in keep:
         yield {"type": "record", "record": record}
+
+    if entry:
+        yield {"type": "doc", "doc": entry}
 
     yield {
         "type": "done",
@@ -160,7 +206,7 @@ def ingest(filename: str, data: bytes, collection: str = "materials"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+")
-    parser.add_argument("--collection", default="materials")
+    parser.add_argument("--collection", default="catalog")
     args = parser.parse_args()
 
     for path in args.files:

@@ -20,3 +20,18 @@ venv/
 __pycache__/
 *.pyc
 .idea/
+
+# 文献索引（含本地路径与元数据）
+library/
+
+# 账号与会话密钥
+auth.db
+auth.secret
+watcher.lock
+auth.db-wal
+auth.db-shm
+gateway.db
+gateway.db-wal
+gateway.db-shm
+chroma.lock
+logs/

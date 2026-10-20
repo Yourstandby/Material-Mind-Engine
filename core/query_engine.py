@@ -9,18 +9,20 @@ from pathlib import Path
 import chromadb
 
 from core import embeddings
+from core import vector_store as vs
 from core.config import env
 from core.llm import client as llm_client, model_name
 
 PERSIST = env("CHROMA_PATH", "./chroma_db")
+CATALOG = env("CATALOG_COLLECTION", "catalog")
 TEMP_KEYWORDS = ("耐温", "温度", "temperature")
 TEMP_EXPANSION = "temperature range operating temperature -20 230 °C"
 
-# 知识库注册表：顺序即前端展示顺序
-LIST_META = [
-    {"name": "materials", "label": "FFKM", "full": "全氟醚橡胶", "hint": "宽温域 · 耐等离子体"},
-    {"name": "fkm", "label": "FKM", "full": "氟橡胶", "hint": "通用氟弹性体"},
-    {"name": "peek", "label": "PEEK", "full": "聚醚醚酮", "hint": "高温工程塑料"},
+# 材质只是产品的一个属性，用于筛选
+MATERIALS = [
+    {"code": "FFKM", "label": "FFKM", "full": "全氟醚橡胶", "hint": "宽温域 · 耐等离子体"},
+    {"code": "FKM", "label": "FKM", "full": "氟橡胶", "hint": "通用氟弹性体"},
+    {"code": "PEEK", "label": "PEEK", "full": "聚醚醚酮", "hint": "高温工程塑料"},
 ]
 
 FIELDS = [
@@ -36,13 +38,14 @@ FIELDS = [
     ("confidence", "置信度"),
 ]
 
-PROMPT = """你是材料数据助手。基于检索结果输出紧凑列表，不写段落、不写开场白、不写总结。
+PROMPT = """你是材料数据助手。检索结果已按「产品」组织，材质只是产品的属性。
+基于检索结果输出紧凑列表，不写段落、不写开场白、不写总结。
 输出格式：每行一条证据
-- 牌号 | 供应商 | 关键数据 | 测试条件 [编号]
+- 产品 | 材质 | 供应商 | 关键数据 | 测试条件 [编号]
 规则：
 1. 一行只写一条证据，字段用 " | " 分隔；缺失字段留空但保留分隔符
 2. 必须使用检索结果中的原始数值，禁止换算、禁止推断
-3. 同一牌号多来源冲突时另起一行，行尾标注「※ 与 [m] 冲突」
+3. 同一产品多来源冲突时另起一行，行尾标注「※ 与 [m] 冲突」
 4. 引用编号必须与检索编号一致，写在行尾
 5. 完全没有相关数值时，只输出：资料不足
 资料:
@@ -56,8 +59,8 @@ def expand_query(question: str) -> str:
     return question
 
 
-def _client() -> chromadb.ClientAPI:
-    return chromadb.PersistentClient(path=PERSIST)
+def _client():
+    return vs.client()
 
 
 def _llm():
@@ -68,17 +71,29 @@ def _model() -> str:
     return model_name()
 
 
-def collection_stats() -> list:
-    """各知识库的记录数；库不存在时计为 0，不报错。"""
-    client = _client()
-    out = []
-    for meta in LIST_META:
-        try:
-            count = client.get_or_create_collection(meta["name"]).count()
-        except Exception:
-            count = 0
-        out.append({**meta, "count": count})
+def material_stats() -> list:
+    """按材质统计产品库，用于前端筛选标签。"""
+    try:
+        store = _client().get_or_create_collection(CATALOG)
+        total = store.count()
+    except Exception:
+        store, total = None, 0
+
+    out = [{"name": "all", "code": "all", "label": "全部", "full": "全部产品", "hint": "跨材质检索", "count": total}]
+    for item in MATERIALS:
+        count = 0
+        if store is not None:
+            try:
+                count = len(store.get(where={"material": item["code"]}).get("ids") or [])
+            except Exception:
+                count = 0
+        out.append({**item, "name": item["code"], "count": count})
     return out
+
+
+def collection_stats() -> list:
+    """兼容旧接口，返回材质视图。"""
+    return material_stats()
 
 
 def sample_records(collection: str, limit: int = 30) -> list:
@@ -89,17 +104,22 @@ def sample_records(collection: str, limit: int = 30) -> list:
     return rows
 
 
-def retrieve(question: str, collection: str = "materials", top_k: int = 5):
+def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
     store = _client().get_or_create_collection(collection)
     query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
+    where = {"material": material} if material and material not in ("all", "") else None
+
+    kwargs = {"n_results": top_k}
+    if where:
+        kwargs["where"] = where
 
     if model:
         if not embeddings.ready():
             raise RuntimeError("该知识库由远程 embedding 构建，请配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL")
-        result = store.query(query_embeddings=[embeddings.embed_one(query)], n_results=top_k)
+        result = store.query(query_embeddings=[embeddings.embed_one(query)], **kwargs)
     else:
-        result = store.query(query_texts=[query], n_results=top_k)
+        result = store.query(query_texts=[query], **kwargs)
 
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
@@ -110,8 +130,9 @@ def format_context(docs, metas) -> str:
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
-        label = meta.get("grade") or meta.get("supplier") or "unknown"
-        lines.append(f"[{i}] {label} | {meta.get('source') or '—'}\n{doc}")
+        product = meta.get("product_name") or meta.get("grade") or meta.get("supplier") or "unknown"
+        material = meta.get("material_label") or meta.get("material") or ""
+        lines.append(f"[{i}] {product} | {material} | {meta.get('source') or '—'}\n{doc}")
     return "\n\n".join(lines)
 
 
@@ -121,12 +142,22 @@ def build_sources(metas) -> list:
     for i, meta in enumerate(metas, start=1):
         meta = meta or {}
         url = str(meta.get("source") or "")
+        page = ""
+        match = re.search(r"\bp\.(\d+)$", url)
+        if match:
+            page = match.group(1)
         items.append(
             {
                 "index": i,
-                "label": meta.get("grade") or meta.get("supplier") or "未标注牌号",
+                "label": meta.get("product_name") or meta.get("grade") or "未标注产品",
+                "product_id": meta.get("product_id") or "",
+                "material": meta.get("material") or "",
+                "material_label": meta.get("material_label") or "",
                 "supplier": meta.get("supplier") or "",
                 "confidence": meta.get("confidence"),
+                "doc_id": meta.get("doc_id") or "",
+                "page": page,
+                "source": url,
                 "url": url if url.startswith("http") else "",
                 "fields": [
                     {"key": k, "label": label, "value": meta[k]}
@@ -158,9 +189,9 @@ def stream_tokens(question: str, docs, metas):
             yield delta
 
 
-def query(question: str, collection: str = "materials", top_k: int = 5) -> tuple:
+def query(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None) -> tuple:
     """一次性返回（向后兼容旧前端）。"""
-    docs, metas = retrieve(question, collection, top_k)
+    docs, metas = retrieve(question, collection, top_k, material)
     if not docs:
         return "未检索到相关数据", []
     answer = "".join(stream_tokens(question, docs, metas))
@@ -191,8 +222,17 @@ def _split_source(value: str) -> tuple:
     return text[: match.start()], match.group(1)
 
 
-def source_stats(collection: str = "materials") -> list:
-    names = [item["name"] for item in LIST_META] if collection == "all" else [collection]
+def _resolve(name: str) -> str:
+    """旧前端可能传材质名或旧库名，统一落到产品库。"""
+    codes = {item["code"] for item in MATERIALS}
+    legacy = {"materials", "peek", "fkm"}
+    if not name or name == "all" or str(name).upper() in codes or str(name).lower() in legacy:
+        return CATALOG
+    return name
+
+
+def source_stats(collection: str = CATALOG) -> list:
+    names = [_resolve(collection)]
     items = []
 
     for name in names:
@@ -234,7 +274,7 @@ def source_stats(collection: str = "materials") -> list:
 
 
 def records_of(collection: str, source: str, limit: int = 200) -> list:
-    store = _client().get_or_create_collection(collection)
+    store = _client().get_or_create_collection(_resolve(collection))
     data = store.get(include=["metadatas", "documents"])
     rows = []
     for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
@@ -252,7 +292,7 @@ def records_of(collection: str, source: str, limit: int = 200) -> list:
 
 
 def delete_source(collection: str, source: str) -> int:
-    store = _client().get_or_create_collection(collection)
+    store = _client().get_or_create_collection(_resolve(collection))
     ids = [
         _id
         for _id, meta in _rows(store)
@@ -263,7 +303,7 @@ def delete_source(collection: str, source: str) -> int:
     return len(ids)
 
 
-def search_debug(question: str, collection: str = "materials", top_k: int = 8) -> list:
+def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> list:
     store = _client().get_or_create_collection(collection)
     text = expand_query(question)
 
@@ -284,6 +324,9 @@ def search_debug(question: str, collection: str = "materials", top_k: int = 8) -
                 "rank": rank,
                 "score": round(1 / (1 + float(dist)), 4) if dist is not None else None,
                 "grade": meta.get("grade_key") or meta.get("grade_raw") or "",
+                "product_id": meta.get("product_id") or "",
+                "product_name": meta.get("product_name") or "",
+                "material": meta.get("material") or "",
                 "supplier": meta.get("supplier") or "",
                 "source": meta.get("source") or "",
                 "collection": collection,
@@ -291,3 +334,67 @@ def search_debug(question: str, collection: str = "materials", top_k: int = 8) -
             }
         )
     return hits
+
+
+def product_stats(material: str | None = None) -> list:
+    """按产品聚合：一个产品 = 供应商 + 牌号，材质是它的属性。"""
+    try:
+        store = _client().get_or_create_collection(CATALOG)
+        data = store.get(include=["metadatas"])
+    except Exception:
+        return []
+
+    groups: dict = {}
+    for meta in data.get("metadatas") or []:
+        meta = meta or {}
+        if material and material not in ("all", "") and meta.get("material") != material:
+            continue
+        pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
+        group = groups.setdefault(
+            pid,
+            {
+                "product_id": pid,
+                "product_name": meta.get("product_name") or "未标注产品",
+                "material": meta.get("material") or "",
+                "material_label": meta.get("material_label") or "",
+                "supplier": meta.get("supplier") or "",
+                "records": 0,
+                "grades": set(),
+                "sources": set(),
+            },
+        )
+        group["records"] += 1
+        if meta.get("grade"):
+            group["grades"].add(str(meta["grade"]))
+        base = str(meta.get("source") or "").split(" p.")[0]
+        if base:
+            group["sources"].add(base)
+
+    out = []
+    for group in groups.values():
+        group["grades"] = sorted(group["grades"])[:4]
+        group["sources"] = sorted(group["sources"])
+        group["documents"] = len(group["sources"])
+        out.append(group)
+    return sorted(out, key=lambda g: (-g["records"], g["product_name"]))
+
+
+def doc_products() -> dict:
+    """doc_id → 产品信息，供资料库展示。"""
+    try:
+        data = _client().get_or_create_collection(CATALOG).get(include=["metadatas"])
+    except Exception:
+        return {}
+    mapping: dict = {}
+    for meta in data.get("metadatas") or []:
+        meta = meta or {}
+        did = meta.get("doc_id")
+        if not did or did in mapping:
+            continue
+        mapping[did] = {
+            "product_id": meta.get("product_id") or "",
+            "product_name": meta.get("product_name") or "",
+            "material": meta.get("material") or "",
+            "material_label": meta.get("material_label") or "",
+        }
+    return mapping

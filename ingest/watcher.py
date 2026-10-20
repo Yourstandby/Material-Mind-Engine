@@ -23,10 +23,11 @@ FAILED = INBOX / "_failed"
 LOG = Path("ingest.log")
 
 POLL = float(env("INBOX_POLL", "5"))
-DEFAULT_COLLECTION = env("INBOX_COLLECTION", "materials")
+DEFAULT_COLLECTION = env("INBOX_COLLECTION", "catalog")
 SUPPORTED = {".pdf", ".docx", ".xlsx", ".xlsm", ".html", ".htm", ".md", ".txt", ".csv", ".json"}
 
 _started = False
+_LOCK_FD: int | None = None
 
 
 def log(message: str) -> None:
@@ -109,9 +110,37 @@ def _loop() -> None:
         time.sleep(POLL)
 
 
+def _acquire_lock() -> bool:
+    """多进程下只允许一个进程守护 inbox。"""
+    global _LOCK_FD
+    if _LOCK_FD is not None:
+        return True
+    try:
+        fd = os.open("watcher.lock", os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return False
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    _LOCK_FD = fd
+    return True
+
+
 def start() -> bool:
     global _started
     if _started:
+        return False
+    if not _acquire_lock():
+        log("inbox 守护已由其他进程启动，本进程跳过")
         return False
     _started = True
     threading.Thread(target=_loop, daemon=True, name="inbox-watcher").start()
