@@ -31,15 +31,11 @@
 > 本机 8000 被既有 reagent-app（Docker）映射占用，所以 LLM 用 8010。
 > 如果 8000 空出来，把 `.env` 的 `MME_PORT_LLM` 和 `UPSTREAM_LLM` 一起改回 8000 即可。
 
-> **当前状态（2026-10-20）**：原有的 llama-server 在会话 0 里以别的账号启动（PID 38168，端口 8000），
-> 普通权限停不掉。要切到调优后的实例，先在**管理员** PowerShell 里执行：
+> **2026-10-20 已完成切换**：原 8000 端口上的 llama-server（PID 38168）已停止，
+> 现由 `start-llm.ps1` 在 **8010** 上运行调优配置（2 槽 ×32K、q8_0 KV、只绑 127.0.0.1）。
+> 8000 端口已归还给 Docker 的 reagent-app。
 >
-> ```powershell
-> taskkill /F /PID 38168
-> ```
->
-> 然后 `.\deploy\local\start-llm.ps1 -Force` —— 会自动用 8010 起一份调优配置、写回 `.env`、
-> 并重启网关。未完成这一步之前，`.env` 里的 `UPSTREAM_LLM` 仍指向 `http://127.0.0.1:8000/v1`，全链路照常可用。
+> 要把模型服务给别的项目用，见 [LAN_ACCESS.md](LAN_ACCESS.md)。
 
 ---
 

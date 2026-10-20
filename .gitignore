@@ -39,3 +39,7 @@ eval/report-*.md
 failures.db
 failures.db-wal
 failures.db-shm
+
+# ---- 局域网接入配置（含真实 API Key）----
+deploy/clients/*.env
+!deploy/clients/*.env.example

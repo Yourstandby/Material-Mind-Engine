@@ -106,6 +106,7 @@ python -m pytest tests/
 - 服务器安装：[deploy/DEPLOY.md](deploy/DEPLOY.md)（一键脚本 `deploy/install.ps1`）
 - 自托管模型（LLM / Embedding / OCR）：[docs/SELFHOST_MODELS.md](docs/SELFHOST_MODELS.md)
 - **本机实测部署（Windows + L20，含启停脚本与 API Key 发放）**：[docs/LOCAL_DEPLOY.md](docs/LOCAL_DEPLOY.md)
+- **局域网接入（把模型服务给其他项目用 / 多项目隔离）**：[docs/LAN_ACCESS.md](docs/LAN_ACCESS.md)
 - 模型统一经 `gateway/` 暴露：API Key + 限速 + 用量统计
 
 ## 版本记录
