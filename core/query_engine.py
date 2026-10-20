@@ -104,13 +104,78 @@ def sample_records(collection: str, limit: int = 30) -> list:
     return rows
 
 
+AGGREGATE = ("哪些", "哪个", "最高", "最低", "最大", "最小", "对比", "比较", "所有", "全部", "分别")
+
+
+def _is_aggregate(question: str) -> bool:
+    return any(word in question for word in AGGREGATE)
+
+
+def _source_of(meta: dict) -> str:
+    return str((meta or {}).get("source") or "")
+
+
+def _grade_bonus(question: str, meta: dict) -> int:
+    """问题里点名的牌号优先：命中则提权。"""
+    q = re.sub(r"[\s\-_]+", "", question.lower())
+    best = 0
+    for key in ("grade", "grade_key", "product_name"):
+        name = meta.get(key)
+        if not name:
+            continue
+        token = re.sub(r"[\s\-_]+", "", str(name).lower()).replace("®", "")
+        if len(token) >= 3 and token in q:
+            best = max(best, 100 + len(token))
+    return best
+
+
+def _rerank(question: str, docs, metas):
+    order = sorted(
+        range(len(docs)),
+        key=lambda i: (-_grade_bonus(question, metas[i] or {}), i),
+    )
+    return [docs[i] for i in order], [metas[i] for i in order]
+
+
+def _diversify(docs, metas, top_k: int, per_source: int = 2):
+    """同一来源最多保留 per_source 条；不足 top_k 时再用剩余结果补齐。"""
+    picked_docs, picked_metas = [], []
+    seen: dict[str, int] = {}
+    rest_docs, rest_metas = [], []
+
+    for doc, meta in zip(docs, metas):
+        key = _source_of(meta)
+        if seen.get(key, 0) >= per_source:
+            rest_docs.append(doc)
+            rest_metas.append(meta)
+            continue
+        seen[key] = seen.get(key, 0) + 1
+        picked_docs.append(doc)
+        picked_metas.append(meta)
+
+    for doc, meta in zip(rest_docs, rest_metas):
+        if len(picked_docs) >= top_k:
+            break
+        picked_docs.append(doc)
+        picked_metas.append(meta)
+
+    return picked_docs[:top_k], picked_metas[:top_k]
+
+
 def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
     store = _client().get_or_create_collection(collection)
     query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
     where = {"material": material} if material and material not in ("all", "") else None
 
-    kwargs = {"n_results": top_k}
+    # 聚合类问题（哪些 / 最低 / 对比）需要更宽的召回
+    fetch = top_k
+    if _is_aggregate(question):
+        fetch = max(10, top_k * 2)
+    else:
+        fetch = max(fetch, top_k * 2)  # 为去重留余量
+
+    kwargs = {"n_results": fetch}
     if where:
         kwargs["where"] = where
 
@@ -123,7 +188,8 @@ def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material:
 
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
-    return docs, metas
+    docs, metas = _rerank(question, docs, metas)
+    return _diversify(docs, metas, top_k)
 
 
 def format_context(docs, metas) -> str:
