@@ -35,3 +35,4 @@ gateway.db-wal
 gateway.db-shm
 chroma.lock
 logs/
+eval/report-*.md

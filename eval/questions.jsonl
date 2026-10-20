@@ -1,0 +1,20 @@
+{"q": "Victrex 450G 的长期使用温度是多少？", "expect_source": "demo-peek.txt", "expect_value": "250", "material": "PEEK", "note": "基础数值"}
+{"q": "PEEK 450G 在 200℃ 下的压缩永久变形是多少？", "expect_source": "up-test.txt", "expect_value": "25", "material": "PEEK", "note": "带条件数值"}
+{"q": "CHEMRAZ 640 的最高使用温度？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "290", "material": "FFKM", "note": "最高温度"}
+{"q": "CHEMRAZ 640 的压缩永久变形是多少？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "25", "material": "FFKM", "note": "CS 数值"}
+{"q": "Teflus PR 100 的耐温上限是多少？", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "牌号级数值"}
+{"q": "Teflus PR 90 能耐到多少度？", "expect_source": "PR-200.pdf", "expect_value": "290", "material": "FFKM", "note": "近义问法"}
+{"q": "Teflus PR 80 的使用温度上限？", "expect_source": "PR-200.pdf", "expect_value": "230", "material": "FFKM", "note": "牌号级数值"}
+{"q": "Teflus PR 200 的压缩永久变形是多少？", "expect_source": "PR-200.pdf", "expect_value": "19", "material": "FFKM", "note": "带百分号数值"}
+{"q": "Teflus PR 200 的耐温上限？", "expect_source": "PR-200.pdf", "expect_value": "315", "material": "FFKM", "note": "同文档多记录"}
+{"q": "Daikin X6055B 的最低使用温度？", "expect_source": "sample.txt", "expect_value": "-20", "material": "FFKM", "note": "负数值"}
+{"q": "Daikin X6055B 在 300℃ 老化 70 小时后压缩永久变形是多少？", "expect_source": "sample.txt", "expect_value": "50", "material": "FFKM", "note": "多条件组合"}
+{"q": "Perlast G75M 的温度范围？", "expect_source": "perlast-g-75-m.pdf", "expect_value": "-15", "material": "FFKM", "note": "负数值"}
+{"q": "哪些产品能耐到 315℃？", "expect_source": null, "expect_value": "315", "material": "FFKM", "note": "多产品聚合，只测数值"}
+{"q": "CHEMRAZ 640 的压缩变形测试条件是什么？", "expect_source": "Greene-Tweed-CHEMRAZ-640", "expect_value": "204", "material": "FFKM", "note": "条件字段"}
+{"q": "Victrex 450G 的测试温度是多少？", "expect_source": "up-test.txt", "expect_value": "200", "material": "PEEK", "note": "条件字段"}
+{"q": "压缩永久变形为 25% 的产品有哪些？", "expect_source": null, "expect_value": "25", "material": null, "note": "跨产品筛选"}
+{"q": "Teflus 系列有哪些牌号？", "expect_source": "PR-200.pdf", "expect_value": "PR", "material": "FFKM", "note": "列举类"}
+{"q": "PEEK 和 FFKM 哪种耐温更高？", "expect_source": null, "expect_value": "315", "material": null, "note": "对比类"}
+{"q": "耐温最低的产品是哪个？", "expect_source": null, "expect_value": "-20", "material": null, "note": "极值类"}
+{"q": "全氟醚橡胶和普通氟橡胶有什么区别？", "expect_source": null, "expect_value": null, "material": null, "note": "开放问题，只测检索"}

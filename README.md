@@ -43,6 +43,12 @@ GUI：`python app.py` → 打开 `http://127.0.0.1:8000`
 ## 测试
 
 ```bash
+python -m pytest tests/                    # 单元测试
+python -m eval.run --dry-run               # 检索基线，不消耗 LLM
+python -m eval.run                         # 完整评测（20 次 LLM 调用）
+```
+
+```bash
 python -m pytest tests/
 ```
 
