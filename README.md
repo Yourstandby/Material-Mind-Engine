@@ -93,6 +93,8 @@ python -m pytest tests/
 
 ## 版本记录
 
+完整更新日志见 [CHANGELOG.md](CHANGELOG.md)，以下为摘要。
+
 ### v2.1.0（2026-10-20）
 
 - **产品为中心**：知识库合并为单一 `catalog`，产品 = 供应商 + 牌号，材质降为筛选属性
