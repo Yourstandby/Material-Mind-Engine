@@ -1,0 +1,108 @@
+# 可移植部署（Linux + NVIDIA 显卡，可选路径）
+#
+# 本机（Windows）走的是 deploy/local 的原生方式；这份 compose 用于搬到
+# 客户/公司的 Linux 服务器，或者想用容器隔离时。
+#
+# 用法：
+#   cp deploy/docker/.env.docker.example .env.docker   # 改里面的地址
+#   docker compose -f deploy/docker/docker-compose.yml --env-file .env.docker up -d --build
+#
+# LLM 不在本文件里：它通常是既有的推理服务（vLLM / llama.cpp / Ollama），
+# 用 UPSTREAM_LLM 指过去即可。
+
+name: mme
+
+services:
+  embed:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    command:
+      - "-m"
+      - "/models/bge-m3-FP16.gguf"
+      - "--embeddings"
+      - "--pooling"
+      - "cls"
+      - "-c"
+      - "8192"
+      - "-b"
+      - "8192"
+      - "-ub"
+      - "8192"
+      - "-ngl"
+      - "99"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-a"
+      - "bge-m3"
+    volumes:
+      - "${MODELS_DIR:-./models}:/models:ro"
+    ports:
+      - "127.0.0.1:8002:8080"
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  ocr:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: mme-app:local
+    command: ["uvicorn", "ocr_service.main:app", "--host", "0.0.0.0", "--port", "8101"]
+    ports:
+      - "127.0.0.1:8101:8101"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8101/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: mme-app:local
+    command: ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8100"]
+    env_file: ../../.env.docker
+    environment:
+      UPSTREAM_EMBED: http://embed:8080/v1
+      UPSTREAM_OCR: http://ocr:8101
+      GATEWAY_DB: /data/gateway.db
+    volumes:
+      - mme-data:/data
+    ports:
+      - "8100:8100"
+    depends_on:
+      - embed
+      - ocr
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: mme-app:local
+    command: ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8300", "--workers", "1"]
+    env_file: ../../.env.docker
+    environment:
+      CHROMA_PATH: /data/chroma_db
+      GATEWAY_DB: /data/gateway.db
+      WATCH_INBOX: "1"
+    volumes:
+      - mme-data:/data
+      - ../../inbox:/app/inbox
+      - ../../library:/app/library
+    ports:
+      - "8300:8300"
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
+volumes:
+  mme-data:

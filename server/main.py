@@ -341,7 +341,7 @@ def api_file(doc_id: str):
     return FileResponse(resolved, media_type=media)
 
 
-PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me", "/favicon.ico"}
+PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/health", "/favicon.ico"}
 
 
 @app.middleware("http")
