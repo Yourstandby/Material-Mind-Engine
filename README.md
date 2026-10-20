@@ -60,6 +60,14 @@ python -m pytest tests/
 | feedback.py | 把 feedback.jsonl 的人工纠错 upsert 进同一 collection（`--interactive` 交互式录入） |
 | main.py | 项目入口占位 |
 | profiles/*.yaml | 材料 profile：字段映射 + 抽取提示词 + 关键词 |
+| ingest/ | 投喂流水线：解析 → 分块 → 抽取 → 归一化 → 去重 → 入库（含 inbox 目录守护） |
+| core/catalog.py | 产品身份与材质归类：产品 = 供应商 + 牌号，材质是属性 |
+| core/auth.py | 内部账号：注册 / 登录 / 改密 / 重置 / 登录限流 |
+| core/vector_store.py | 向量库访问层：embedded / server 双模式、跨进程写锁、退避重试 |
+| gateway/ | 内网模型网关：OpenAI 兼容代理，API Key + 限速 + 用量统计 |
+| scripts/ | 运维脚本：发 API Key、重置密码、历史数据迁移 |
+| deploy/ | 服务器安装脚本与部署手册 |
+| docs/ | 自托管模型（LLM / Embedding / OCR）方案 |
 
 ## 环境变量（.env）
 
@@ -82,6 +90,24 @@ python -m pytest tests/
 - 服务器安装：[deploy/DEPLOY.md](deploy/DEPLOY.md)（一键脚本 `deploy/install.ps1`）
 - 自托管模型（LLM / Embedding / OCR）：[docs/SELFHOST_MODELS.md](docs/SELFHOST_MODELS.md)
 - 模型统一经 `gateway/` 暴露：API Key + 限速 + 用量统计
+
+## 版本记录
+
+### v2.1.0（2026-10-20）
+
+- **产品为中心**：知识库合并为单一 `catalog`，产品 = 供应商 + 牌号，材质降为筛选属性
+- **文献管理**：自动抽取标题 / 作者 / 年份 / 类型 / DOI / 专利号，支持规范命名与人工修正
+- **账号与权限**：注册、登录、改密、管理员重置、CLI 重置；原文接口纳入鉴权
+- **并发**：向量库访问层（跨进程写锁 + 重试 + server 模式）；watcher 文件锁保证单进程守护
+- **模型网关**：`gateway/` 提供 OpenAI 兼容代理，API Key、限速、用量统计、流式透传
+- **部署**：`deploy/install.ps1` 一键安装；`docs/SELFHOST_MODELS.md` 自托管方案
+- 修复：多 worker 下限流不共享、重置密码后仍被锁定、登录页缺少注册入口
+
+### v2.0.0（2026-10-18）
+
+- 移除 Chainlit / Gradio / Streamlit，改为 FastAPI + 原生 HTML/CSS/JS
+- 自动化投喂流水线（inbox 守护）、资料库管理、引用可追溯
+- 重新授权：AGPL-3.0 + 商业双授权
 
 ## 许可证
 
