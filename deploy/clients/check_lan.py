@@ -43,6 +43,20 @@ def get(url: str, key: str = "", timeout: int = 30):
         return json.loads(resp.read().decode("utf-8"))
 
 
+def read_env_file(path: str) -> dict:
+    """读同目录下的 mme-client.env（可选），省得每次手敲 key。"""
+    values = {}
+    if not os.path.exists(path):
+        return values
+    for line in open(path, encoding="utf-8-sig"):
+        text = line.strip()
+        if not text or text.startswith("#") or "=" not in text:
+            continue
+        name, _, value = text.partition("=")
+        values[name.strip()] = value.strip().strip("'\"")
+    return values
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=DEFAULT_BASE)
@@ -51,6 +65,15 @@ def main() -> int:
     parser.add_argument("--embed-model", default=DEFAULT_EMBED)
     parser.add_argument("--image", help="可选：一张含文字的图片，用来测 OCR")
     args = parser.parse_args()
+
+    # 没显式给 key 时，尝试读同目录的 mme-client.env
+    if not args.key:
+        local = read_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mme-client.env"))
+        args.key = local.get("MME_API_KEY", "")
+        if args.base_url == DEFAULT_BASE and local.get("MME_BASE_URL"):
+            args.base_url = local["MME_BASE_URL"]
+        args.model = local.get("MME_LLM_MODEL") or args.model
+        args.embed_model = local.get("MME_EMBED_MODEL") or args.embed_model
 
     base = args.base_url.rstrip("/")
     root = base[: -len("/v1")] if base.endswith("/v1") else base
