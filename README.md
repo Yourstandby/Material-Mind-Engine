@@ -5,10 +5,16 @@
 ## 架构
 
 ```
-.firecrawl/ (index.md)  →  extract.py  →  raw_json/{profile}/merged.json  →  data_cleaner.py  →  cleaned.json
-                                                                                                    ↓
-   app.py / query.py  ←  chromadb  ←  vector_store.py  ←  feedback.py  ←  feedback.jsonl
+inbox/ ──► ingest/ 解析 → 分块 → 抽取 → 归一化 → 去重 ──► chroma（catalog）
+                                                             │
+浏览器 web/ ◄── server/（FastAPI + SSE） ◄── core/query_engine ◄┘
+                     ▲                              ▲
+              core/auth（账号/会话）        core/llm + core/embeddings
+                                                     ▲
+                                             gateway/（API Key / 限速）
 ```
+
+上传与投喂走 `ingest/pipeline.py`，检索与回答走 `core/query_engine.py`，两者共用同一个 `catalog` 向量库。失败案例写入 `failures.db`，由 `scripts/failure_review.py` 归类后转成评测题。
 
 ## 快速开始
 
@@ -63,7 +69,6 @@ python -m pytest tests/
 | app.py | 启动 Web 服务（FastAPI + SSE） |
 | server/main.py | HTTP 接口：`/api/bootstrap` `/api/chat`（SSE 流式）`/api/records` |
 | web/ | 前端：原生 HTML/CSS/JS，无构建步骤 |
-| feedback.py | 把 feedback.jsonl 的人工纠错 upsert 进同一 collection（`--interactive` 交互式录入） |
 | main.py | 项目入口占位 |
 | profiles/*.yaml | 材料 profile：字段映射 + 抽取提示词 + 关键词 |
 | ingest/ | 投喂流水线：解析 → 分块 → 抽取 → 归一化 → 去重 → 入库（含 inbox 目录守护） |

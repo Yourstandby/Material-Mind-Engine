@@ -36,3 +36,6 @@ gateway.db-shm
 chroma.lock
 logs/
 eval/report-*.md
+failures.db
+failures.db-wal
+failures.db-shm

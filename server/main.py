@@ -4,6 +4,7 @@
 """
 import json
 import mimetypes
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import auth, embeddings
+from core import failures
 from core import vector_store as vs
 from core.config import env, status as config_status
 from core.query_engine import (
@@ -26,6 +28,7 @@ from core.query_engine import (
     product_stats,
     records_of,
     retrieve,
+    retrieve_scored,
     sample_records,
     search_debug,
     source_stats,
@@ -123,24 +126,64 @@ def records(collection: str = "materials", limit: int = 30):
     return {"items": sample_records(collection, limit)}
 
 
+REFUSAL_WORDS = ("资料不足", "没有相关", "未提供", "无相关数据")
+
+
+def _capture_failure(question: str, answer: str, sources: list[str], top_score, username: str) -> None:
+    """自动识别失败并落库：拒答 / 检索分过低 / 无引用。"""
+    trigger = None
+    if any(word in answer for word in REFUSAL_WORDS):
+        trigger = "refusal"
+    elif top_score is not None and top_score < float(env("FAIL_MIN_SCORE", "0.35")):
+        trigger = "low_score"
+    elif sources and not re.search(r"\[\d+\]", answer):
+        trigger = "no_citation"
+    if not trigger:
+        return
+    try:
+        failures.record(
+            question=question,
+            answer=answer,
+            username=username,
+            sources=sources,
+            top_score=top_score,
+            trigger=trigger,
+        )
+    except Exception:
+        pass
+
+
 @app.post("/api/chat")
-def chat(body: Ask):
+def chat(body: Ask, request: Request):
     question = body.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
+    user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
+    username = str(user.get("username") or "")
 
     def gen():
         started = time.time()
+        parts: list[str] = []
+        sources: list[str] = []
+        top_score = None
         try:
-            docs, metas = retrieve(question, body.collection, body.top_k, material=body.material)
+            docs, metas, scores = retrieve_scored(
+                question, body.collection, body.top_k, material=body.material
+            )
             if not docs:
+                _capture_failure(question, "", [], None, username)
                 yield sse({"type": "error", "message": "该知识库未检索到相关数据，换个问法或换库试试"})
                 yield sse({"type": "done"})
                 return
+            sources = [str((meta or {}).get("source") or "") for meta in metas]
+            valid = [score for score in scores if score is not None]
+            top_score = max(valid) if valid else None
             yield sse({"type": "meta", "hits": len(docs), "collection": body.collection})
             yield sse({"type": "sources", "items": build_sources(metas)})
             for token in stream_tokens(question, docs, metas):
+                parts.append(token)
                 yield sse({"type": "token", "text": token})
+            _capture_failure(question, "".join(parts), sources, top_score, username)
             yield sse({"type": "done", "elapsed_ms": int((time.time() - started) * 1000)})
         except KeyError as exc:
             yield sse({"type": "error", "message": f"缺少环境变量 {exc}，请检查 .env"})
@@ -152,6 +195,33 @@ def chat(body: Ask):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+class FeedbackIn(BaseModel):
+    question: str
+    answer: str = ""
+    verdict: str | None = None
+    expected: str | None = None
+
+
+@app.post("/api/failures")
+def api_failure(body: FeedbackIn, request: Request):
+    user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
+    fid = failures.record(
+        question=body.question,
+        answer=body.answer,
+        username=str(user.get("username") or ""),
+        trigger="manual",
+        verdict=body.verdict,
+        expected=body.expected,
+    )
+    return {"id": fid}
+
+
+@app.get("/api/failures")
+def api_failures(request: Request, status: str = "open", limit: int = 100):
+    _require_admin(request)
+    return {"items": failures.list_items(status, limit), "stats": failures.stats()}
 
 
 @app.get("/api/sources")

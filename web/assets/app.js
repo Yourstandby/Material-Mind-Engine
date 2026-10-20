@@ -434,8 +434,8 @@ async function ask(question) {
       t.body.innerHTML = renderMD(text);
       const actions = document.createElement("div");
       actions.className = "t-actions";
-      actions.innerHTML = `<button type="button">复制</button><button type="button">重新生成</button>`;
-      const [copy, again] = actions.querySelectorAll("button");
+      actions.innerHTML = `<button type="button">复制</button><button type="button">重新生成</button><button type="button" class="bad">不准确</button>`;
+      const [copy, again, bad] = actions.querySelectorAll("button");
       copy.addEventListener("click", async () => {
         await navigator.clipboard.writeText(text);
         copy.textContent = "已复制";
@@ -444,6 +444,34 @@ async function ask(question) {
       again.addEventListener("click", () => {
         t.turn.remove();
         ask(q);
+      });
+      bad.addEventListener("click", () => {
+        if (actions.querySelector(".verdicts")) return;
+        const box = document.createElement("div");
+        box.className = "verdicts";
+        box.innerHTML = [
+          ["A", "检索没找到"],
+          ["B", "答错了"],
+          ["C", "资料里没有"],
+          ["D", "问题不合适"],
+        ]
+          .map(([v, label]) => `<button type="button" data-v="${v}">${label}</button>`)
+          .join("");
+        actions.appendChild(box);
+        box.querySelectorAll("button").forEach((btn) =>
+          btn.addEventListener("click", async () => {
+            try {
+              await fetch("/api/failures", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ question: q, answer: text, verdict: btn.dataset.v }),
+              });
+              box.innerHTML = `<span class="verdict-done">已记录，谢谢</span>`;
+            } catch (e) {
+              box.innerHTML = `<span class="verdict-done">记录失败</span>`;
+            }
+          })
+        );
       });
       t.turn.appendChild(actions);
       scrollToBottom();

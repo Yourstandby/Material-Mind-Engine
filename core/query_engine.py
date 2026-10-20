@@ -136,51 +136,39 @@ def _grade_bonus(question: str, meta: dict) -> int:
     return best
 
 
-def _rerank(question: str, docs, metas):
-    order = sorted(
-        range(len(docs)),
-        key=lambda i: (-_grade_bonus(question, metas[i] or {}), i),
-    )
-    return [docs[i] for i in order], [metas[i] for i in order]
+def _rerank_rows(question: str, rows: list):
+    """rows: (doc, meta, score, order)；按牌号命中优先，其余保持原顺序。"""
+    return sorted(rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), row[3]))
 
 
-def _diversify(docs, metas, top_k: int, per_source: int = 2):
-    """同一来源最多保留 per_source 条；不足 top_k 时再用剩余结果补齐。"""
-    picked_docs, picked_metas = [], []
-    seen: dict[str, int] = {}
-    rest_docs, rest_metas = [], []
-
-    for doc, meta in zip(docs, metas):
-        key = _source_of(meta)
+def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
+    picked, rest, seen = [], [], {}
+    for row in rows:
+        key = _source_of(row[1])
         if seen.get(key, 0) >= per_source:
-            rest_docs.append(doc)
-            rest_metas.append(meta)
+            rest.append(row)
             continue
         seen[key] = seen.get(key, 0) + 1
-        picked_docs.append(doc)
-        picked_metas.append(meta)
-
-    for doc, meta in zip(rest_docs, rest_metas):
-        if len(picked_docs) >= top_k:
+        picked.append(row)
+    for row in rest:
+        if len(picked) >= top_k:
             break
-        picked_docs.append(doc)
-        picked_metas.append(meta)
-
-    return picked_docs[:top_k], picked_metas[:top_k]
+        picked.append(row)
+    return picked[:top_k]
 
 
-def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
+def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
+    """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。"""
     store = _client().get_or_create_collection(collection)
     query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
     where = {"material": material} if material and material not in ("all", "") else None
 
     # 聚合类问题（哪些 / 最低 / 对比）需要更宽的召回
-    fetch = top_k
     if _is_aggregate(question):
         fetch = max(10, top_k * 2)
     else:
-        fetch = max(fetch, top_k * 2)  # 为去重留余量
+        fetch = max(top_k, top_k * 2)  # 为去重留余量
 
     kwargs = {"n_results": fetch}
     if where:
@@ -195,8 +183,21 @@ def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material:
 
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
-    docs, metas = _rerank(question, docs, metas)
-    return _diversify(docs, metas, top_k)
+    dists = (result.get("distances") or [[]])[0]
+
+    rows = []
+    for index, (doc, meta) in enumerate(zip(docs, metas)):
+        distance = dists[index] if index < len(dists) else None
+        score = round(1 / (1 + float(distance)), 4) if distance is not None else None
+        rows.append((doc, meta, score, index))
+
+    rows = _diversify_rows(_rerank_rows(question, rows), top_k)
+    return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
+
+
+def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
+    docs, metas, _scores = retrieve_scored(question, collection, top_k, material)
+    return docs, metas
 
 
 def format_context(docs, metas) -> str:
