@@ -278,3 +278,39 @@ OCR：A4 300 DPI 约 2–4 s/页（CPU），扫描件多时是瓶颈，可按需
 - `GATEWAY_ADMIN_TOKEN` 定期换；给外部系统的 key 一人一把，别共用；
 - `.env`、`auth.db`、`gateway.db`、`chroma_db`、`inbox/_done` 要备份（模型权重不用备份）；
 - AGPL-3.0：对外提供 SaaS 需要开源或买商业授权，见 `COMMERCIAL.md`。
+
+---
+
+## 11. 备份与恢复
+
+一键备份（完整提交历史 + `.env`，单文件）：
+
+```powershell
+.\deploy\local\backup.ps1                 # 默认存 D:\OC\backup
+.\deploy\local\backup.ps1 -Dir E:\备份 -Keep 20
+```
+
+产物：
+
+| 文件 | 内容 |
+|---|---|
+| `MME-<时间>.bundle` | 全部提交历史（约 0.4 MB），`git clone` 这个文件就能还原仓库 |
+| `env-<时间>.txt` | `.env` 副本，**含 API Key**，别外传 |
+
+恢复：
+
+```powershell
+git clone D:\OC\backup\MME-20261021-1313.bundle MME-restore
+cd MME-restore
+# 再照第 3 节装依赖、拷模型文件、把 env-*.txt 改回 .env
+```
+
+要推到 GitHub / 内网 Git 时：
+
+```powershell
+git remote add myrepo https://github.com/<你的账号>/<仓库>.git
+git push -u myrepo master
+```
+
+> 上游 `origin`（Yourstandby/Material-Mind-Engine）只用于 fetch 同步，**不要往里 push**。
+> 真怕手滑可以执行：`git remote set-url --push origin DISABLED`。
