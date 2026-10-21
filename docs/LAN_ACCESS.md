@@ -5,6 +5,90 @@
 
 ---
 
+## 0. 另一台电脑接入：五步
+
+### 第一步：确认这台机器放行了端口（只需做一次）
+
+Windows 防火墙默认拦入站。在**本机**用**管理员** PowerShell 跑一次：
+
+```powershell
+cd D:\OC\MME
+.\deploy\local\open-firewall.ps1
+```
+
+只放行 `8100`（网关）和 `8300`（Web），且仅限同网段。
+模型端口 `8001 / 8002 / 8010 / 8101` 不要放行，它们绑的是 127.0.0.1，放行也没用。
+
+### 第二步：在另一台电脑上探一下通不通
+
+```powershell
+Test-NetConnection 172.16.1.210 -Port 8100      # TcpTestSucceeded 要是 True
+Test-NetConnection 172.16.1.210 -Port 8300
+```
+
+- `False` → 回到第一步（或本机 IP 变了：`ipconfig` 看 `NIC1`）
+- `True` → 继续
+
+### 第三步：拷三个文件过去
+
+```
+deploy/clients/mme-client.env      # 真实地址 + Key（别外传）
+deploy/clients/check_lan.py        # 自检脚本，只用标准库
+```
+
+放在同一个目录下即可，`check_lan.py` 会自动读旁边的 `mme-client.env`。
+
+### 第四步：跑自检
+
+```powershell
+python check_lan.py
+```
+
+期望输出：
+
+```
+  [PASS] 鉴权  无 key 返回 401
+  [PASS] 模型列表  ['qwen2.5-72b-instruct']
+  [PASS] 对话  0.6s  收到
+  [PASS] 向量  bge-m3 dim=1024
+
+全部通过
+```
+
+顺手测 OCR（可选）：`python check_lan.py --image 任意带字的图片.png`
+
+### 第五步：填进目标项目的配置
+
+照第 3 节的填法（OpenAI 兼容四要素）：
+
+```ini
+base_url = http://172.16.1.210:8100/v1
+api_key  = mme-xxxx
+chat 模型 = qwen2.5-72b-instruct
+embedding 模型 = bge-m3（维度 1024）
+```
+
+**给这台新电脑单独发一个 key**（别共用，方便限速和排查）：
+
+```powershell
+cd D:\OC\MME
+.\.venv\Scripts\python -m scripts.make_key --name 设计部电脑 --rpm 120
+```
+
+### 连不上时对着这张表看
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `Test-NetConnection` 为 False / 超时 | 防火墙没放行，或不在同一网段 | 第一步 `open-firewall.ps1`；确认 IP 是 `172.16.1.210` |
+| 401 | key 错 / 已吊销 / 少了 `Bearer ` 前缀 | `scripts.make_key --list` 核对 |
+| 429 `并发超限` | 同一 key 同时在途超过 2 个 | 客户端串行化，或给项目单独发 key |
+| 429 其他 | 超过该 key 的每分钟请求数 | 调大 `--rpm` |
+| 404 `model not found` | 模型名写错 | 用 `/v1/models` 返回的名字 |
+| 建库时报维度错 | embedding 维度没填 1024 | 填 1024 |
+| 本机能通、别的机器超时 | 服务只绑了 127.0.0.1 | 只可能是 8100/8300，别试 8010/8002/8101 |
+
+---
+
 ## 1. 三个能力，一个入口
 
 | 能力 | 地址 | 模型名 | 说明 |
