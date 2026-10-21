@@ -107,6 +107,7 @@ python -m pytest tests/
 - 自托管模型（LLM / Embedding / OCR）：[docs/SELFHOST_MODELS.md](docs/SELFHOST_MODELS.md)
 - **本机实测部署（Windows + L20，含启停脚本与 API Key 发放）**：[docs/LOCAL_DEPLOY.md](docs/LOCAL_DEPLOY.md)
 - **局域网接入（把模型服务给其他项目用 / 多项目隔离）**：[docs/LAN_ACCESS.md](docs/LAN_ACCESS.md)
+- **一页纸接入说明（直接发给同事）**：[docs/接入说明.md](docs/接入说明.md)
 - 模型统一经 `gateway/` 暴露：API Key + 限速 + 用量统计
 
 ## 版本记录
