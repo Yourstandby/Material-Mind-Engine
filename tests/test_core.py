@@ -2,22 +2,39 @@
 
 用法: python -m pytest tests/
 """
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from data_cleaner import normalize
-from extract import parse_json
-from query import expand_query
+from core.normalize import grade_key, normalize_record, supplier, units
+from core.query_engine import expand_query
+from ingest.chunk import split
 
 
-def test_normalize_temperature():
-    assert normalize("100°F") == "37.8°C"
+def test_grade_key_strips_x_prefix():
+    assert grade_key("X6055B") == "6055B"
+    assert grade_key("chemraz 640") == "CHEMRAZ640"
 
 
-def test_normalize_pressure():
-    assert normalize("100psi") == "0.689 MPa"
+def test_supplier_alias():
+    assert supplier("大金") == "Daikin Industries"
+    assert supplier("Greene Tweed") == "Greene Tweed"
+
+
+def test_units_temperature():
+    assert units("100°F") == "37.8°C"
+
+
+def test_units_pressure():
+    assert units("100psi") == "0.69 MPa"
+
+
+def test_units_duration():
+    assert units("24 hrs") == "24 h"
+
+
+def test_normalize_record_adds_keys():
+    out = normalize_record({"grade": "X6055B", "supplier": "daikin"})
+    assert out["grade_key"] == "6055B"
+    assert out["grade_raw"] == "X6055B"
+    assert out["supplier"] == "Daikin Industries"
 
 
 def test_expand_query_adds_temperature_terms():
@@ -28,9 +45,9 @@ def test_expand_query_keeps_unrelated_question():
     assert expand_query("密度是多少？") == "密度是多少？"
 
 
-def test_parse_json_plain_array():
-    assert parse_json('[{"a": 1}]') == [{"a": 1}]
-
-
-def test_parse_json_invalid_returns_empty():
-    assert parse_json("no json") == []
+def test_chunk_splits_long_text_with_overlap():
+    text = "".join(str(i % 10) for i in range(2000))
+    chunks = split(text, size=800, overlap=100)
+    assert len(chunks) == 3
+    assert all(len(chunk) <= 800 for chunk in chunks)
+    assert chunks[0][-100:] == chunks[1][:100]  # 重叠区一致

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 import time
 from pathlib import Path
 
@@ -28,7 +29,8 @@ VERDICTS = {
 }
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn():
     conn = sqlite3.connect(DB, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -50,7 +52,14 @@ def _conn() -> sqlite3.Connection:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_fail_status ON failures(status)")
     conn.commit()
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def record(

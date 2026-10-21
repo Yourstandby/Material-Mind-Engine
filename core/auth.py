@@ -14,6 +14,7 @@ import os
 import re
 import secrets
 import sqlite3
+from contextlib import contextmanager
 import time
 from pathlib import Path
 
@@ -42,7 +43,8 @@ def _secret() -> bytes:
     return value
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn():
     conn = sqlite3.connect(DB, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -68,7 +70,14 @@ def _conn() -> sqlite3.Connection:
     if "token_version" not in columns:  # 兼容旧库
         conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1")
         conn.commit()
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _hash(password: str, salt: str) -> str:

@@ -6,6 +6,9 @@
 
 ### 新增
 
+- 扫描件 OCR：无文本层页面自动渲染并调用 OCR 服务，支持网关鉴权与页数上限
+- `ocr_service/`：RapidOCR + FastAPI 服务，依赖独立在 `requirements-ocr.txt`
+- CI：GitHub Actions 跑语法检查与单元测试（`tests/` 增至 23 项）
 - 失败案例收集：自动捕获拒答 / 低分 / 无引用，支持点踩归类（A 检索未召回 / B 答错 / C 数据缺失 / D 超纲），存 SQLite 并记录用户名
 - `scripts/failure_review.py`：列出未归类案例、打标、一键转成评测题
 - 评测框架 `eval/`：42 题评测集（单产品 / 条件 / 对比 / 聚合 / 开放 / 无答案）与跑分脚本，输出检索命中率 / 数值准确率 / 引用有效率

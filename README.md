@@ -79,6 +79,8 @@ python -m pytest tests/
 | scripts/ | 运维脚本：发 API Key、重置密码、历史数据迁移 |
 | deploy/ | 服务器安装脚本与部署手册 |
 | docs/ | 自托管模型（LLM / Embedding / OCR）方案 |
+| ingest/ocr.py | OCR 客户端：扫描页渲染 + 调用 OCR 服务 |
+| ocr_service/ | OCR 服务（RapidOCR + FastAPI），依赖见 requirements-ocr.txt |
 
 ## 环境变量（.env）
 
@@ -95,6 +97,9 @@ python -m pytest tests/
 | INVITE_CODE | 注册邀请码（首个账号免码） |
 | UPSTREAM_LLM | 网关的上游模型地址 |
 | GATEWAY_ADMIN_TOKEN | 网关管理接口令牌 |
+| OCR_BASE_URL | OCR 服务地址（扫描件需要，可经网关） |
+| OCR_API_KEY | 走网关时的 API Key |
+| OCR_MAX_PAGES | 单份文档最多 OCR 页数（默认 20） |
 
 ## 部署
 

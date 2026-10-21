@@ -27,6 +27,7 @@ gateway/         内网模型网关：API Key、限速、用量、流式代理
 web/             原生前端，无构建步骤（index.html / login.html / assets/）
 scripts/         运维脚本：发 key、重置密码、历史迁移
 deploy/          服务器安装脚本与部署手册
+ocr_service/     OCR 服务（RapidOCR + FastAPI），独立依赖 requirements-ocr.txt
 docs/            架构与自托管模型方案
 tests/           单元测试
 ```

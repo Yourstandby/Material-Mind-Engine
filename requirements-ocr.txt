@@ -1,0 +1,7 @@
+# OCR 服务依赖（独立安装，主应用不需要）
+rapidocr_onnxruntime>=1.4
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pillow>=10
+numpy>=1.26
+python-multipart>=0.0.9

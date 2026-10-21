@@ -127,13 +127,19 @@ async def ocr(file: UploadFile = File(...)):
 .\.venv\Scripts\python -m uvicorn ocr_service.main:app --host 0.0.0.0 --port 8101
 ```
 
-**扫描版 PDF** 需要先转图片再送 OCR（`pypdfium2` 或 `PyMuPDF` 渲染每页为 PNG），这部分尚未接入 `ingest/parse.py`，属于下一步工作：
+**扫描版 PDF 已接入**：`ingest/parse.py` 检测到页面无文本层时，用 `pypdfium2` 以 200 DPI 渲染成图片，再调用 OCR 服务。
 
-```python
-# ingest/parse.py 的 _pdf 中，页文本为空时：
-#   text = ocr_service.extract(page_image)
-# 配置项：OCR_BASE_URL=http://127.0.0.1:8100，经网关鉴权后调用 /ocr
+```ini
+# 直连 OCR 服务
+OCR_BASE_URL=http://127.0.0.1:8101
+# 或经网关（多一层鉴权与限流）
+# OCR_BASE_URL=http://127.0.0.1:8100
+# OCR_API_KEY=mme-xxx
+
+OCR_MAX_PAGES=20    # 单份文档最多识别页数，防止大文件拖垮服务
 ```
+
+未配置 `OCR_BASE_URL` 时，扫描件会被跳过并在投喂结果里给出「需配置 OCR」的警告。
 
 ---
 

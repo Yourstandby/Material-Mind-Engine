@@ -4,6 +4,8 @@ import io
 import re
 from pathlib import Path
 
+from ingest import ocr
+
 TEXTUAL = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".log"}
 
 
@@ -16,20 +18,51 @@ def decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _render_page(data: bytes, page_no: int) -> bytes:
+    """把 PDF 某一页渲染成 PNG（200 DPI），供 OCR 使用。"""
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(io.BytesIO(data))
+    page = pdf[page_no - 1]
+    bitmap = page.render(scale=200 / 72)
+    image = bitmap.to_pil()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _pdf(data: bytes, name: str):
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data))
     pages, warnings = [], []
+    ocr_used = 0
+    ocr_limit = ocr.max_pages() if ocr.available() else 0
+
     for index, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
         except Exception as exc:  # 单页失败不影响整份
-            text, _ = "", warnings.append(f"第 {index} 页解析失败: {exc}")
+            text = ""
+            warnings.append(f"第 {index} 页解析失败: {exc}")
+
+        if not text.strip() and ocr_limit:
+            if ocr_used >= ocr_limit:
+                warnings.append(f"第 {index} 页无文本层，已超过 OCR 页数上限（{ocr_limit}）")
+            else:
+                try:
+                    text = ocr.image_to_text(_render_page(data, index), f"{name}-p{index}.png")
+                    if text.strip():
+                        ocr_used += 1
+                        warnings.append(f"第 {index} 页无文本层，已用 OCR 识别")
+                except Exception as exc:
+                    warnings.append(f"第 {index} 页 OCR 失败: {exc}")
+
         if text.strip():
             pages.append({"page": index, "text": text})
         else:
-            warnings.append(f"第 {index} 页无文本层（可能是扫描件）")
+            warnings.append(f"第 {index} 页无文本层（可能是扫描件，需配置 OCR）")
+
     return {"file": name, "pages": pages, "warnings": warnings}
 
 

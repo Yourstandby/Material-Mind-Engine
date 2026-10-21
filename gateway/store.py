@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import sqlite3
+from contextlib import contextmanager
 import time
 from pathlib import Path
 
@@ -13,7 +14,8 @@ from core.config import env
 DB = Path(env("GATEWAY_DB", "./gateway.db"))
 
 
-def _conn() -> sqlite3.Connection:
+@contextmanager
+def _conn():
     conn = sqlite3.connect(DB, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -40,7 +42,14 @@ def _conn() -> sqlite3.Connection:
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_key ON usage(key_id, at)")
     conn.commit()
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _hash(key: str) -> str:
