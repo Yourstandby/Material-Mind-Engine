@@ -25,6 +25,7 @@ from core.query_engine import (
     delete_source,
     doc_products,
     material_stats,
+    named_suppliers,
     product_stats,
     records_of,
     resolve_collection,
@@ -177,7 +178,13 @@ def chat(body: Ask, request: Request):
             )
             if not docs:
                 _capture_failure(question, "", [], None, username)
-                yield sse({"type": "error", "message": "该知识库未检索到相关数据，换个问法或换库试试"})
+                names = named_suppliers(question)
+                message = (
+                    f"库里没有 {names[0]} 的资料，别家厂商的产品不能拿来代替"
+                    if names
+                    else "该知识库未检索到相关数据，换个问法或换库试试"
+                )
+                yield sse({"type": "error", "message": message})
                 yield sse({"type": "done"})
                 return
             sources = [str((meta or {}).get("source") or "") for meta in metas]

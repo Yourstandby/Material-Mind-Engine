@@ -26,6 +26,36 @@ MATERIALS = [
     {"code": "PEEK", "label": "PEEK", "full": "聚醚醚酮", "hint": "高温工程塑料"},
 ]
 
+# 问题里点名的厂商：命中后直接按 supplier 过滤，避免拿别家产品顶替
+SUPPLIER_WORDS = (
+    ("NOK", ("nok", "エヌオーケー")),
+    ("Syensqo", ("syensqo", "solvay", "索尔维", "苏威", "tecnoflon")),
+    ("Daikin Industries", ("daikin", "大金")),
+    ("Chemours", ("chemours", "科慕")),
+    ("Parker Hannifin", ("parker", "派克")),
+    ("Greene Tweed", ("greene tweed",)),
+    ("Mitsui Chemicals", ("mitsui", "三井")),
+    ("NICHIAS", ("nichias", "ニチアス")),
+    ("Trelleborg", ("trelleborg", "特瑞堡")),
+)
+
+
+def named_suppliers(question: str) -> list:
+    """问题里提到的厂商（英文按词边界判断，避免 knock 里的 nok 误命中）。"""
+    low = (question or "").lower()
+    names = []
+    for name, keys in SUPPLIER_WORDS:
+        for key in keys:
+            if key.isascii():
+                if re.search(rf"(?<![a-z]){re.escape(key)}(?![a-z])", low):
+                    names.append(name)
+                    break
+            elif key in low:
+                names.append(name)
+                break
+    return names
+
+
 FIELDS = [
     ("grade", "牌号"),
     ("supplier", "供应商"),
@@ -220,6 +250,12 @@ def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, ma
         fetch = max(10, top_k * 2)
     else:
         fetch = max(top_k, top_k * 2)  # 为去重留余量
+
+    # 问题点名厂商（NOK / 索尔维 …）时按供应商过滤，不能用别家的数据顶替
+    suppliers = named_suppliers(question)
+    if suppliers:
+        supplier_where = {"supplier": {"$in": suppliers}}
+        where = supplier_where if not where else {"$and": [where, supplier_where]}
 
     kwargs = {"n_results": fetch}
     if where:
