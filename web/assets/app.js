@@ -91,6 +91,44 @@ function renderMD(md) {
       continue;
     }
 
+    // 证据行（「- 产品 | 材质 | 供应商 | 数据 | 条件」）连续出现时转成表格，方便横向对比
+    const evCells = (l) => {
+      const m = (l || "").match(/^\s*[-*]\s+(.*)$/);
+      if (!m) return null;
+      if ((m[1].match(/\s\|\s/g) || []).length < 3) return null;
+      return m[1].split("|").map((c) => c.trim());
+    };
+
+    if (evCells(line) && evCells(lines[i + 1] || "")) {
+      flush();
+      closeList();
+      const head = ["产品", "材质", "供应商", "关键数据", "测试条件"];
+      const rows = [];
+      while (i < lines.length) {
+        const row = evCells(lines[i]);
+        if (!row) break;
+        rows.push(row);
+        i++;
+      }
+      const norm = (r) => {
+        let c = r.slice();
+        // 多出来的列（比如引用编号单独成列）并进「关键数据」，最后一列留给测试条件
+        if (c.length > head.length)
+          c = [...c.slice(0, 3), c.slice(3, c.length - 1).join(" "), c[c.length - 1]];
+        while (c.length < head.length) c.push("");
+        return c.slice(0, head.length);
+      };
+      html +=
+        '<div class="tbl"><table><thead><tr>' +
+        head.map((c) => `<th>${c}</th>`).join("") +
+        "</tr></thead><tbody>" +
+        rows
+          .map((r) => "<tr>" + norm(r).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>")
+          .join("") +
+        "</tbody></table></div>";
+      continue;
+    }
+
     if (/^\s*[-*]\s+/.test(line)) {
       flush();
       if (list !== "ul") {
