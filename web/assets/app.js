@@ -44,7 +44,8 @@ function renderMD(md) {
   let i = 0;
 
   const flush = () => {
-    if (buf.length) html += `<p>${inline(buf.join(" "))}</p>`;
+    // 逐行输出是设计如此（一行一条证据），单换行也要保留
+    if (buf.length) html += `<p>${buf.map((l) => inline(l)).join("<br>")}</p>`;
     buf = [];
   };
   const closeList = () => {

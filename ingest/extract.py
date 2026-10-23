@@ -38,7 +38,10 @@ test_temp 测试温度 / test_duration 测试时长 / source 来源标记 / conf
 6. material：该表所属的材质类别，只能是 FKM / FFKM / PEEK / PTFE / VMQ / EPDM / NBR / PU 之一。
    依据片段标题或表头判断（出现 PFR、全氟橡胶、全氟醚、FFKM 记为 FFKM；只写氟橡胶记 FKM），判断不了填 null。
    material 和 supplier 属于分类信息，不算「推断数值」，允许根据片段中的文字线索填写。
+7. 片段经常是表格的一部分：如果「页面表头」里有牌号列表，而数据行里没有重复牌号，
+   按列顺序把数值对应到牌号；对不上就填 null，不要猜。
 
+页面表头：{head}
 来源标记：{source}
 资料片段：
 {text}"""
@@ -71,8 +74,8 @@ def _confidence(value) -> float:
     return max(0.0, min(1.0, number))
 
 
-def extract(text: str, source: str) -> list[dict]:
-    raw = chat(PROMPT.format(source=source, text=text[:6000]))
+def extract(text: str, source: str, head: str = "") -> list[dict]:
+    raw = chat(PROMPT.format(head=head or "—", source=source, text=text[:6000]))
     records = []
     for item in _load_array(raw):
         if not isinstance(item, dict):

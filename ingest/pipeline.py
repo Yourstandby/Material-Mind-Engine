@@ -39,7 +39,14 @@ FIELD_LABELS = dict(FIELD_LABELS)
 
 def serialize(record: dict) -> str:
     """向量化用的文本：字段名用中文，中文提问才能直接命中（cs → 压缩永久变形）。"""
-    return "\n".join(f"{FIELD_LABELS.get(k, k)}: {v}" for k, v in record.items() if v not in (None, "", [], {}))
+    lines = []
+    for key, value in record.items():
+        if value in (None, "", [], {}):
+            continue
+        if key == "material":
+            value = catalog.material_label(str(value))
+        lines.append(f"{FIELD_LABELS.get(key, key)}: {value}")
+    return "\n".join(lines)
 
 
 def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
@@ -101,6 +108,20 @@ def detect_supplier(text: str) -> str:
     return ""
 
 
+def default_material(pages_text: list[str]) -> str:
+    """整篇文档的兜底材质。
+
+    只在同一种材质出现时整体沿用；FKM/FFKM 混排的文档里，
+    FFKM 页通常会明写 PFR/全氟，所以没标记的页按 FKM 处理。
+    """
+    known = {detect_material(text) for text in pages_text} - {""}
+    if len(known) == 1:
+        return known.pop()
+    if {"FKM", "FFKM"} <= known:
+        return "FKM"
+    return ""
+
+
 def _client():
     return vs.client()
 
@@ -132,11 +153,15 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
 
     chunks = []
     for page in doc["pages"]:
+        head = " ".join(page["text"].splitlines()[:3])[:200]
         for piece in split(page["text"]):
-            chunks.append({"page": page["page"], "text": piece})
+            chunks.append({"page": page["page"], "text": piece, "head": head})
 
     # 页面级材质 / 文档级供应商：LLM 抽不到时用来补全，让「FFKM」「索尔维」这类问题能被检索到
-    page_material = {page["page"]: detect_material(page["text"]) for page in doc["pages"]}
+    fallback_material = default_material([page["text"] for page in doc["pages"]])
+    page_material = {
+        page["page"]: detect_material(page["text"]) or fallback_material for page in doc["pages"]
+    }
     doc_supplier = detect_supplier("\n".join(page["text"] for page in doc["pages"]))
 
     if not chunks:
