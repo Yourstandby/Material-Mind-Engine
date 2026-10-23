@@ -247,7 +247,7 @@ def format_context(docs, metas) -> str:
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
-        product = meta.get("product_name") or meta.get("grade") or meta.get("supplier") or "unknown"
+        product = meta.get("grade") or meta.get("product_name") or meta.get("supplier") or "unknown"
         material = meta.get("material_label") or meta.get("material") or ""
         # 文档里存的是英文字段名（cs / chem_resistance），换成中文再喂给模型，
         # 否则模型容易把「耐化学性 280」说成「压缩永久变形 280」
@@ -272,7 +272,7 @@ def build_sources(metas) -> list:
         items.append(
             {
                 "index": i,
-                "label": meta.get("product_name") or meta.get("grade") or "未标注产品",
+                "label": meta.get("grade") or meta.get("product_name") or "未标注产品",
                 "product_id": meta.get("product_id") or "",
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",

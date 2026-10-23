@@ -117,6 +117,16 @@ def _page_head(text: str) -> str:
     return " ".join(lines[:2])[:220]
 
 
+def _head_at(page_text: str, piece: str) -> str:
+    """取片段之前最近的一个表头；一页有多张表时不会拿错列名。"""
+    index = page_text.find(piece[:30]) if piece else -1
+    prefix = page_text[:index] if index > 0 else ""
+    lines = [line.strip() for line in prefix.splitlines() if "特性" in line or "单位" in line]
+    if lines:
+        return lines[-1][:220]
+    return _page_head(page_text)
+
+
 def default_material(pages_text: list[str]) -> str:
     """整篇文档的兜底材质。
 
@@ -162,9 +172,8 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
 
     chunks = []
     for page in doc["pages"]:
-        head = _page_head(page["text"])
         for piece in split(page["text"]):
-            chunks.append({"page": page["page"], "text": piece, "head": head})
+            chunks.append({"page": page["page"], "text": piece, "head": _head_at(page["text"], piece)})
 
     # 页面级材质 / 文档级供应商：LLM 抽不到时用来补全，让「FFKM」「索尔维」这类问题能被检索到
     fallback_material = default_material([page["text"] for page in doc["pages"]])
