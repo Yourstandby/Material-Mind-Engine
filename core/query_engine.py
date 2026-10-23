@@ -193,7 +193,9 @@ def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, ma
     # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
     if any(word in question for word in ENUM_WORDS):
         top_k = max(top_k, 12)
-    store = _client().get_or_create_collection(_resolve(collection))    query = expand_query(question)
+    store = _client().get_or_create_collection(_resolve(collection))
+
+    query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
     where = {"material": material} if material and material not in ("all", "") else None
     if not where:

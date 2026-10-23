@@ -31,15 +31,67 @@ def _render_page(data: bytes, page_no: int) -> bytes:
     return buffer.getvalue()
 
 
+def _pdf_pdfium(data: bytes, name: str) -> dict:
+    """用 pdfium 解析：AES 加密的 PDF 需要 cryptography，本机没装时靠 pdfium 自带的解密。"""
+    import pypdfium2 as pdfium
+
+    document = pdfium.PdfDocument(data)
+    pages, warnings = [], []
+    for index in range(1, len(document) + 1):
+        try:
+            text = document[index - 1].get_textpage().get_text_bounded() or ""
+        except Exception as exc:  # noqa: BLE001 - 单页失败不影响整份
+            text = ""
+            warnings.append(f"第 {index} 页解析失败: {type(exc).__name__}: {exc}")
+
+        if not text.strip() and ocr.available():
+            try:
+                text = ocr.image_to_text(_render_page(data, index), f"{name}-p{index}.png")
+                warnings.append(
+                    f"第 {index} 页无文本层，已 OCR 识别 {len(text)} 字"
+                    if text
+                    else f"第 {index} 页无文本层，OCR 未识别出文字"
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"第 {index} 页 OCR 失败: {type(exc).__name__}: {exc}")
+
+        if text.strip():
+            pages.append({"page": index, "text": text})
+        else:
+            warnings.append(f"第 {index} 页无文本层（可能是扫描件）")
+    return {"file": name, "pages": pages, "warnings": warnings}
+
+
 def _pdf(data: bytes, name: str):
     from pypdf import PdfReader
 
-    reader = PdfReader(io.BytesIO(data))
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        if reader.is_encrypted:
+            try:
+                unlocked = reader.decrypt("")
+            except Exception:  # 缺 cryptography 时 AES 会抛 DependencyError
+                unlocked = 0
+            if not unlocked:
+                raise RuntimeError("加密且无法用空密码打开")
+        pdf_pages = list(reader.pages)
+    except Exception as exc:  # noqa: BLE001 - pypdf 解不开就交给 pdfium
+        try:
+            result = _pdf_pdfium(data, name)
+        except Exception as exc2:  # noqa: BLE001
+            return {
+                "file": name,
+                "pages": [],
+                "warnings": [f"PDF 解析失败（{type(exc2).__name__}: {exc2}）；文件可能已加密，请先去掉密码再上传"],
+            }
+        result["warnings"].insert(0, f"pypdf 无法解析（{type(exc).__name__}），已改用 pdfium")
+        return result
+
     pages, warnings = [], []
     ocr_used = 0
     ocr_limit = ocr.max_pages() if ocr.available() else 0
 
-    for index, page in enumerate(reader.pages, start=1):
+    for index, page in enumerate(pdf_pages, start=1):
         try:
             text = page.extract_text() or ""
         except Exception as exc:  # 单页失败不影响整份
