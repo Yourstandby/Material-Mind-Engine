@@ -108,6 +108,15 @@ def detect_supplier(text: str) -> str:
     return ""
 
 
+def _page_head(text: str) -> str:
+    """给抽取用的页面表头：优先取「特性 单位 …」那一行，跨块表格才能对上列名。"""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    for i, line in enumerate(lines):
+        if "特性" in line or "单位" in line:
+            return " ".join(lines[i : i + 2])[:220]
+    return " ".join(lines[:2])[:220]
+
+
 def default_material(pages_text: list[str]) -> str:
     """整篇文档的兜底材质。
 
@@ -153,7 +162,7 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
 
     chunks = []
     for page in doc["pages"]:
-        head = " ".join(page["text"].splitlines()[:3])[:200]
+        head = _page_head(page["text"])
         for piece in split(page["text"]):
             chunks.append({"page": page["page"], "text": piece, "head": head})
 
