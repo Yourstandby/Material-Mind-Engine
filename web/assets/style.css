@@ -262,6 +262,11 @@ kbd {
 
 /* ───────── 引用列表 ───────── */
 .sources { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--rule-strong); }
+.sources:not([hidden]) { animation: sourcesIn 0.32s ease both; }
+@keyframes sourcesIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
 .sources-head {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--muted); margin-bottom: 4px;

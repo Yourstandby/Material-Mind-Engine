@@ -123,7 +123,7 @@ function renderMD(md) {
         head.map((c) => `<th>${c}</th>`).join("") +
         "</tr></thead><tbody>" +
         rows
-          .map((r) => "<tr>" + norm(r).map((c) => `<td>${inline(c)}</td>`).join("") + "</tr>")
+          .map((r) => "<tr>" + norm(r).map((c) => `<td>${c ? inline(c) : "—"}</td>`).join("") + "</tr>")
           .join("") +
         "</tbody></table></div>";
       continue;
@@ -315,6 +315,15 @@ function renderSources(container, items) {
   );
 }
 
+// 只保留正文里真正引用到的来源，编号按正文出现顺序
+function citedSources(items, text) {
+  const used = new Set();
+  const re = /\[(\d{1,2})\]/g;
+  let m;
+  while ((m = re.exec(text || ""))) used.add(Number(m[1]));
+  return (items || []).filter((s) => used.has(s.index)).sort((a, b) => a.index - b.index);
+}
+
 function showError(body, message, onRetry) {
   body.innerHTML = "";
   const box = document.createElement("div");
@@ -446,6 +455,7 @@ async function ask(question) {
   setBusy(true);
 
   let text = "";
+  let sources = [];
   let started = performance.now();
   let frame = 0;
 
@@ -461,7 +471,7 @@ async function ask(question) {
       $("#hits").textContent = `${evt.hits} 条命中 · ${state.active}`;
       $("#hits").classList.add("on");
     } else if (evt.type === "sources") {
-      renderSources(t.sources, evt.items || []);
+      sources = evt.items || [];
     } else if (evt.type === "token") {
       text += evt.text || "";
       if (!frame) frame = requestAnimationFrame(paint);
@@ -471,6 +481,10 @@ async function ask(question) {
       const ms = evt.elapsed_ms || Math.round(performance.now() - started);
       t.stat.textContent = `${ms}ms · ${Math.round(text.length)} 字`;
       t.body.innerHTML = renderMD(text);
+      // 引用等正文全部落定后再出现，且只列正文真正引用到的编号
+      const cited = citedSources(sources, text);
+      if (cited.length) renderSources(t.sources, cited);
+      else t.sources.hidden = true;
       const actions = document.createElement("div");
       actions.className = "t-actions";
       actions.innerHTML = `<button type="button">复制</button><button type="button">重新生成</button><button type="button" class="bad">不准确</button>`;
