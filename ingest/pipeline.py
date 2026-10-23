@@ -137,8 +137,34 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
     )
 
     yield {"type": "stage", "stage": "embed", "records": len(keep)}
-    documents = [serialize(r) for r in keep]
-    ids = [hashlib.md5(d.encode()).hexdigest() for d in documents]
+
+    # 同一份文件里经常出现完全相同的行：跨页重复的表格、重复表头、页脚。
+    # 以前用「文本 md5」当 ID，这些重复项在同一批 upsert 里撞 ID，
+    # Chroma 会整批拒绝（DuplicateIDError: Expected IDs to be unique）。
+    # 现在：先按文本去重，再用「文档 ID + 序号」生成 ID
+    #   - 批内一定唯一，不会再撞；
+    #   - 同一份文件重复投喂时 ID 不变，仍然走「已存在 → 跳过」的幂等路径。
+    documents: list[str] = []
+    unique_records: list[dict] = []
+    seen_text: set[str] = set()
+    duplicates = 0
+    for record in keep:
+        text = serialize(record)
+        if text in seen_text:
+            duplicates += 1
+            continue
+        seen_text.add(text)
+        unique_records.append(record)
+        documents.append(text)
+
+    keep = unique_records
+    ids = [hashlib.md5(f"{did}:{index}".encode()).hexdigest() for index in range(len(documents))]
+    if duplicates:
+        _log(f"  批内去重 {duplicates} 条完全重复的记录")
+        yield {
+            "type": "warn",
+            "message": f"同一份文件里有 {duplicates} 条完全重复的记录（多为跨页重复的表格行），已合并",
+        }
 
     client = _client()
     model = embeddings.config()["model"]
@@ -199,6 +225,7 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
         "added": len(keep) - len(found_ids),
         "skipped": len(found_ids),
         "quarantined": quarantined,
+        "duplicates": duplicates,
         "total": len(keep),
     }
 
