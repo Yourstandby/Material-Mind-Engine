@@ -266,6 +266,7 @@ OCR：A4 300 DPI 约 2–4 s/页（CPU），扫描件多时是瓶颈，可按需
 | 扫描件入库失败 | `OCR_BASE_URL` 没配 / OCR 服务没起；投喂进度里会有 `第 N 页 OCR 失败` |
 | 中文乱码 | PowerShell 先 `chcp 65001`；日志按 UTF-8 打开 |
 | 网关 429（`并发超限`） | 同一个 key 的在途请求超过 `GATEWAY_KEY_CONCURRENCY`；重试或给该项目单独发 key |
+| `DuplicateIDError: Expected IDs to be unique` | 文档里有完全重复的记录（跨页重复表格行），旧版本会撞 ID；已修复（`ad554a0`），重启 Web 后重新投喂 |
 | `database is locked` | 向量库仍是 embedded 模式；跑 `start-chroma.ps1` 并在 `.env` 设 `CHROMA_MODE=server` |
 | 日志里刷 `ConnectionResetError: [WinError 10054]` | Windows 上 asyncio 的已知噪音（客户端/健康检查直接断开连接），不影响功能，可忽略 |
 
