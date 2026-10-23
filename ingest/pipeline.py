@@ -14,6 +14,7 @@ import chromadb
 from core import catalog, embeddings
 from core import vector_store as vs
 from core.config import env
+from core.query_engine import FIELDS as FIELD_LABELS
 from ingest import metadata, repo
 from ingest.chunk import split
 from ingest.extract import extract
@@ -33,8 +34,12 @@ def _log(message: str) -> None:
         pass
 
 
+FIELD_LABELS = dict(FIELD_LABELS)
+
+
 def serialize(record: dict) -> str:
-    return "\n".join(f"{k}: {v}" for k, v in record.items() if v not in (None, "", [], {}))
+    """向量化用的文本：字段名用中文，中文提问才能直接命中（cs → 压缩永久变形）。"""
+    return "\n".join(f"{FIELD_LABELS.get(k, k)}: {v}" for k, v in record.items() if v not in (None, "", [], {}))
 
 
 def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
@@ -43,8 +48,9 @@ def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
         meta["doc_id"] = doc_id
     supplier = str(record.get("supplier") or "")
     grade = str(record.get("grade") or record.get("grade_raw") or "")
-    # 抽取结果里没有材质线索时，用上传时前端选中的材质兜底（选「全部」则为空）
-    material = catalog.material_of(str(record.get("composition") or ""), grade, fallback=material_hint)
+    # 抽取结果里没有材质线索时，用页面级判断 / 上传时选中的材质兜底（选「全部」则为空）
+    fallback = str(record.get("material") or material_hint or "")
+    material = catalog.material_of(str(record.get("composition") or ""), grade, fallback=fallback)
     meta["product_id"] = catalog.product_key(supplier, grade)
     meta["product_name"] = catalog.product_name(supplier, grade)
     meta["material"] = material
@@ -55,6 +61,44 @@ def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
 def _locate(collection: str, filename: str) -> str:
     path = Path("inbox") / "_done" / collection / Path(filename).name
     return str(path) if path.exists() else ""
+
+
+# 页眉/页脚里的书名行会把每页都判成 FFKM（"FKM/FFKM 材料指南"），先剔掉
+HEADER_NOISE = ("材料指南",)
+
+# FFKM 判定在前：全氟体系优先
+MATERIAL_SIGNALS = (
+    ("FFKM", ("ffkm", "全氟醚", "全氟橡胶", "全氟弹性体", "perfluoro", "pfr")),
+    ("FKM", ("fkm", "氟橡胶", "氟弹性体", "fluoroelastomer")),
+)
+
+SUPPLIER_SIGNALS = (
+    ("Solvay", ("solvay", "索尔维", "苏威", "syensqo")),
+    ("Daikin Industries", ("daikin", "大金")),
+    ("Chemours", ("chemours", "科慕")),
+)
+
+
+def _body_text(text: str) -> str:
+    keep = [line for line in (text or "").splitlines() if not any(noise in line for noise in HEADER_NOISE)]
+    return "\n".join(keep).lower()
+
+
+def detect_material(text: str) -> str:
+    """按页面正文判断材质；判不出来返回空串（交给上传时选的材质兜底）。"""
+    body = _body_text(text)
+    for code, keys in MATERIAL_SIGNALS:
+        if any(key in body for key in keys):
+            return code
+    return ""
+
+
+def detect_supplier(text: str) -> str:
+    body = _body_text(text)
+    for name, keys in SUPPLIER_SIGNALS:
+        if any(key in body for key in keys):
+            return name
+    return ""
 
 
 def _client():
@@ -91,6 +135,10 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
         for piece in split(page["text"]):
             chunks.append({"page": page["page"], "text": piece})
 
+    # 页面级材质 / 文档级供应商：LLM 抽不到时用来补全，让「FFKM」「索尔维」这类问题能被检索到
+    page_material = {page["page"]: detect_material(page["text"]) for page in doc["pages"]}
+    doc_supplier = detect_supplier("\n".join(page["text"] for page in doc["pages"]))
+
     if not chunks:
         yield {"type": "error", "message": f"解析到 {chars} 字，但没有有效分块"}
         return
@@ -111,6 +159,12 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
             _log(f"  第 {index}/{len(chunks)} 块抽取失败: {last_error}")
             yield {"type": "warn", "message": f"第 {index}/{len(chunks)} 块抽取失败: {exc}"}
             continue
+        hint = page_material.get(chunk["page"], "")
+        for record in found:
+            if not record.get("material") and hint:
+                record["material"] = hint
+            if not record.get("supplier") and doc_supplier:
+                record["supplier"] = doc_supplier
         records.extend(found)
         yield {"type": "progress", "done": index, "total": len(chunks), "found": len(records)}
 

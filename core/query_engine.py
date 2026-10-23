@@ -29,6 +29,7 @@ FIELDS = [
     ("grade", "牌号"),
     ("supplier", "供应商"),
     ("composition", "组成"),
+    ("material", "材质"),
     ("temp_range", "温度范围"),
     ("cs", "压缩永久变形"),
     ("chem_resistance", "耐化学性"),
@@ -39,24 +40,46 @@ FIELDS = [
 ]
 
 PROMPT = """你是材料数据助手。检索结果已按「产品」组织，材质只是产品的属性。
-基于检索结果输出紧凑列表，不写段落、不写开场白、不写总结。
+基于检索结果输出紧凑列表，不写段落、不写开场白。
 输出格式：每行一条证据
 - 产品 | 材质 | 供应商 | 关键数据 | 测试条件 [编号]
 规则：
 1. 一行只写一条证据，字段用 " | " 分隔；缺失字段留空但保留分隔符
-2. 必须使用检索结果中的原始数值，禁止换算、禁止推断
-3. 同一产品多来源冲突时另起一行，行尾标注「※ 与 [m] 冲突」
-4. 引用编号必须与检索编号一致，写在行尾
-5. 完全没有相关数值时，只输出：资料不足
+2. 关键数据必须带字段名，写成「压缩永久变形: 18」「耐化学性: 6300」这种形式，不要只写裸数字；
+   测试条件带上介质、温度、时长（如「乙二胺, 100°C, 72 h」）
+3. 必须使用检索结果中的原始数值，禁止换算、禁止推断
+4. 同一产品多来源冲突时另起一行，行尾标注「※ 与 [m] 冲突」
+5. 引用编号必须与检索编号一致，写在行尾
+6. 问题是「有哪些 / 列出 / 包括哪些 / 多少种」时：把检索结果里的产品逐行列出，
+   同一产品的多行可合并；只要检索结果里有相关产品，就不允许回答「资料不足」
+7. 问题明确要求比较或求极值（最大/最小/最高/最低/最好/最差/哪个）时：先按上面的格式列出依据，
+   最后单独一行：「结论: <产品> <字段名>: <数值> [编号]」；
+   问「典型值 / 常见值 / 一般是多少」时不要给结论行
+8. 字段缺失就留空，不要因为缺少供应商、材质或测试条件就判定「资料不足」；
+   只有检索结果与问题完全无关时，才输出：资料不足
 资料:
 {context}
 问题: {question}"""
 
 
+# 常见叫法补全：用户说品牌/俗称，库里存的是归一化后的名字
+ALIASES = (
+    ("索尔维", "Syensqo Solvay Tecnoflon"),
+    ("苏威", "Syensqo Solvay Tecnoflon"),
+    ("全氟醚", "FFKM 全氟橡胶"),
+    ("全氟橡胶", "FFKM"),
+    ("氟橡胶", "FKM"),
+)
+
+
 def expand_query(question: str) -> str:
+    query = question
+    for alias, expansion in ALIASES:
+        if alias in question:
+            query = f"{query} {expansion}"
     if any(keyword in question for keyword in TEMP_KEYWORDS):
-        return f"{question} {TEMP_EXPANSION}"
-    return question
+        query = f"{query} {TEMP_EXPANSION}"
+    return query
 
 
 def _client():
@@ -103,6 +126,8 @@ def sample_records(collection: str, limit: int = 30) -> list:
         rows.append({"document": doc, **{k: v for k, v in (meta or {}).items()}})
     return rows
 
+
+ENUM_WORDS = ("有哪些", "列出", "包括哪些", "多少种", "都有什么", "有哪些型号", "都有哪些")
 
 AGGREGATE = ("哪些", "哪个", "最高", "最低", "最大", "最小", "对比", "比较", "所有", "全部", "分别")
 
@@ -159,10 +184,23 @@ def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
 
 def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
     """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。"""
-    store = _client().get_or_create_collection(collection)
-    query = expand_query(question)
+    # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
+    if any(word in question for word in ENUM_WORDS):
+        top_k = max(top_k, 12)
+    store = _client().get_or_create_collection(_resolve(collection))    query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
     where = {"material": material} if material and material not in ("all", "") else None
+    if not where:
+        # 问题里点名了一种材质就直接过滤，避免回答「FFKM」时混进 FKM 的数据
+        # 注意：不能用子串判断，"ffkm" 里包含 "fkm"
+        low = question.lower()
+        named = [
+            item["code"]
+            for item in MATERIALS
+            if re.search(rf"(?<![a-z]){item['code'].lower()}(?![a-z])", low)
+        ]
+        if len(named) == 1:
+            where = {"material": named[0]}
 
     # 聚合类问题（哪些 / 最低 / 对比）需要更宽的召回
     if _is_aggregate(question):
@@ -203,12 +241,19 @@ def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material:
 
 
 def format_context(docs, metas) -> str:
+    labels = dict(FIELDS)
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
         product = meta.get("product_name") or meta.get("grade") or meta.get("supplier") or "unknown"
         material = meta.get("material_label") or meta.get("material") or ""
-        lines.append(f"[{i}] {product} | {material} | {meta.get('source') or '—'}\n{doc}")
+        # 文档里存的是英文字段名（cs / chem_resistance），换成中文再喂给模型，
+        # 否则模型容易把「耐化学性 280」说成「压缩永久变形 280」
+        body = []
+        for raw in (doc or "").splitlines():
+            key, sep, value = raw.partition(": ")
+            body.append(f"{labels.get(key, key)}: {value}" if sep else raw)
+        lines.append(f"[{i}] {product} | {material} | {meta.get('source') or '—'}\n" + "\n".join(body))
     return "\n\n".join(lines)
 
 
