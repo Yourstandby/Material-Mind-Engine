@@ -26,15 +26,28 @@ MAX_BYTES = int(os.environ.get("OCR_MAX_MB", "20")) * 1024 * 1024
 
 app = FastAPI(title="MME OCR", docs_url="/api/docs", redoc_url=None)
 _ENGINE = None
+_ENGINE_MODEL = ""
 
 
 def engine():
-    """懒加载：第一次调用时再载模型，服务秒起。"""
-    global _ENGINE
+    """懒加载：第一次调用时再载模型，服务秒起。
+
+    识别模型默认用 PP-OCRv5（中文 + 英文 + 日文假名一块支持），
+    老版 PP-OCRv4 的中文模型认不出假名，日语资料会整段变成乱码。
+    """
+    global _ENGINE, _ENGINE_MODEL
     if _ENGINE is None:
+
+        from pathlib import Path
+
         from rapidocr_onnxruntime import RapidOCR
 
-        _ENGINE = RapidOCR()
+        model = os.environ.get("OCR_REC_MODEL") or ""
+        if not model:
+            candidate = Path(__file__).resolve().parent / "models" / "ch_PP-OCRv5_rec_mobile.onnx"
+            model = str(candidate) if candidate.exists() else ""
+        _ENGINE = RapidOCR(rec_model_path=model) if model else RapidOCR()
+        _ENGINE_MODEL = model or "ch_PP-OCRv4 (built-in)"
     return _ENGINE
 
 
@@ -63,7 +76,13 @@ def _open(data: bytes) -> Image.Image:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "engine": "rapidocr", "loaded": _ENGINE is not None, "max_mb": MAX_BYTES // 1024 // 1024}
+    return {
+        "ok": True,
+        "engine": "rapidocr",
+        "model": _ENGINE_MODEL or "pending",
+        "loaded": _ENGINE is not None,
+        "max_mb": MAX_BYTES // 1024 // 1024,
+    }
 
 
 @app.post("/ocr")

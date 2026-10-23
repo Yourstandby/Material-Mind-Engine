@@ -270,6 +270,21 @@ OCR：A4 300 DPI 约 2–4 s/页（CPU），扫描件多时是瓶颈，可按需
 | 问答答「资料不足」但下面有引用 | 检索到了记录，但记录里没有材质/供应商这类能把问题和数据对上的字段（例如问「索尔维有哪些 FFKM」，而记录只有牌号+数值）；新版本入库时会按页面标题补材质、按文档正文补供应商，旧数据重新投喂一次即可 |
 | `database is locked` | 向量库仍是 embedded 模式；跑 `start-chroma.ps1` 并在 `.env` 设 `CHROMA_MODE=server` |
 | 日志里刷 `ConnectionResetError: [WinError 10054]` | Windows 上 asyncio 的已知噪音（客户端/健康检查直接断开连接），不影响功能，可忽略 |
+| 日语资料入库后是乱码 / 答不出日文内容 | ① 识别模型要换成 PP-OCRv5（自带假名），见下方「日语资料」；② 文本层缺字的页会自动整页 OCR；③ 旧数据重新投喂一次 |
+| 扫描版日语 PDF 识别不出假名 | 确认 `ocr_service/models/ch_PP-OCRv5_rec_mobile.onnx` 存在，或设 `OCR_REC_MODEL` 指向模型；`/health` 的 `model` 字段能看到当前加载的模型 |
+
+### 日语资料
+
+- 识别模型用 **PP-OCRv5**（同一个模型覆盖中文、英文、日文假名）；老的 PP-OCRv4 中文模型认不出假名，会把「Oリング」识别成「O ング」。
+- 模型文件（约 16 MB）不入 git，放在 `ocr_service/models/ch_PP-OCRv5_rec_mobile.onnx`，下载：
+
+  ```powershell
+  Invoke-WebRequest "https://modelscope.cn/api/v1/models/RapidAI/RapidOCR/repo?Revision=master&FilePath=onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx" -OutFile ocr_service\models\ch_PP-OCRv5_rec_mobile.onnx
+  ```
+
+  换模型后重启 OCR：`start-ocr.ps1 -Force`（首次调用才加载，`/health` 里 `model` 显示实际路径）。
+- 日文 PDF 的字体经常没有 ToUnicode，文本层会缺字（`�`）：这类页面会自动渲染后整页 OCR（`OCR_DPI` 默认 300，可降到 220 提速）。
+- 入库和展示都会把日语词换成中文（`core/normalize.py` 的 `JA_TERMS`：`潤滑油→润滑油`、`72時間→72 h` 等），牌号保持原文；回答统一中文输出。
 
 ---
 

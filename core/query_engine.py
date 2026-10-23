@@ -12,6 +12,7 @@ from core import embeddings
 from core import vector_store as vs
 from core.config import env
 from core.llm import client as llm_client, model_name
+from core.normalize import localize
 
 PERSIST = env("CHROMA_PATH", "./chroma_db")
 CATALOG = env("CATALOG_COLLECTION", "catalog")
@@ -63,6 +64,10 @@ PROMPT = """你是材料数据助手。检索结果已按「产品」组织，�
    只有检索结果与问题完全无关时，才输出：资料不足
 10. 只有牌号、没有关键数据的检索结果，仅当问题问「有哪些牌号 / 型号 / 产品」时列出一行；
     其他问题不要输出这种空行
+11. 检索结果可能是日语或英语原文：一律用中文输出（牌号、型号、化学式保留原文），
+    不要出现假名；拿不准的日语词按上下文翻译成中文
+12. 问题里提到的品牌/厂商如果在检索结果里完全找不到，直接说「库中没有该品牌的资料」，
+    不要用其他厂商的产品代替
 资料:
 {context}
 问题: {question}"""
@@ -267,7 +272,7 @@ def format_context(docs, metas) -> str:
             # 库里测试温度是纯数字（200），模型会照抄成「测试温度: 200」，补上单位
             if label == "测试温度" and re.fullmatch(r"-?\d+(\.\d+)?", value.strip()):
                 value = f"{value.strip()}°C"
-            body.append(f"{label}: {value}")
+            body.append(f"{label}: {localize(value)}")
         lines.append(f"[{i}] {product} | {material} | {meta.get('source') or '—'}\n" + "\n".join(body))
     return "\n\n".join(lines)
 
@@ -296,7 +301,11 @@ def build_sources(metas) -> list:
                 "source": url,
                 "url": url if url.startswith("http") else "",
                 "fields": [
-                    {"key": k, "label": label, "value": meta[k]}
+                    {
+                        "key": k,
+                        "label": label,
+                        "value": localize(meta[k]) if isinstance(meta[k], str) else meta[k],
+                    }
                     for k, label in FIELDS
                     if meta.get(k) not in (None, "", [], {})
                 ],

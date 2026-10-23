@@ -39,12 +39,17 @@ FIELD_LABELS = dict(FIELD_LABELS)
 
 def serialize(record: dict) -> str:
     """向量化用的文本：字段名用中文，中文提问才能直接命中（cs → 压缩永久变形）。"""
+    from core.normalize import localize
+
     lines = []
     for key, value in record.items():
         if value in (None, "", [], {}):
             continue
         if key == "material":
             value = catalog.material_label(str(value))
+        elif isinstance(value, str):
+            # 日语资料里的「72時間」「潤滑油」等统一成中文，检索和展示都不再出现假名
+            value = localize(value)
         lines.append(f"{FIELD_LABELS.get(key, key)}: {value}")
     return "\n".join(lines)
 

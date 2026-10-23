@@ -9,6 +9,14 @@ from ingest import ocr
 TEXTUAL = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".log"}
 
 
+def _broken(text: str) -> bool:
+    """文本层缺字太多（日文字体没嵌 ToUnicode）：U+FFFD 达到 1% 或 5 处以上。"""
+    if not text:
+        return False
+    bad = text.count("\ufffd")
+    return bad >= 5 and bad / max(len(text), 1) >= 0.01
+
+
 def decode(data: bytes) -> str:
     for encoding in ("utf-8", "utf-8-sig", "gb18030", "latin-1"):
         try:
@@ -55,6 +63,16 @@ def _pdf_pdfium(data: bytes, name: str) -> dict:
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"第 {index} 页 OCR 失败: {type(exc).__name__}: {exc}")
 
+        if text.strip() and _broken(text) and ocr.available():
+            broken_before = text.count("\ufffd")
+            try:
+                ocr_text = ocr.image_to_text(_render_page(data, index), f"{name}-p{index}.png")
+                if ocr_text and ocr_text.count("\ufffd") < broken_before:
+                    text = ocr_text
+                    warnings.append(f"第 {index} 页缺字 {broken_before} 处，已 OCR 重新识别")
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"第 {index} 页补 OCR 失败: {type(exc).__name__}: {exc}")
+
         if text.strip():
             pages.append({"page": index, "text": text})
         else:
@@ -91,12 +109,26 @@ def _pdf(data: bytes, name: str):
     ocr_used = 0
     ocr_limit = ocr.max_pages() if ocr.available() else 0
 
+    document = None  # 延迟打开 pdfium：仅乱码页或扫描页时才用
     for index, page in enumerate(pdf_pages, start=1):
         try:
             text = page.extract_text() or ""
         except Exception as exc:  # 单页失败不影响整份
             text = ""
             warnings.append(f"第 {index} 页解析失败: {exc}")
+
+        # pypdf 对部分日文字体映射不出字形（U+FFFD），同一页改用 pdfium 再取一次
+        if "\ufffd" in text:
+            try:
+                if document is None:
+                    import pypdfium2 as pdfium
+
+                    document = pdfium.PdfDocument(data)
+                alt = document[index - 1].get_textpage().get_text_bounded() or ""
+                if alt and alt.count("\ufffd") < text.count("\ufffd"):
+                    text = alt
+            except Exception:  # noqa: BLE001 - 取不到就保留原文本
+                pass
 
         if not text.strip() and ocr_limit:
             if ocr_used >= ocr_limit:
@@ -109,6 +141,21 @@ def _pdf(data: bytes, name: str):
                         warnings.append(f"第 {index} 页无文本层，已用 OCR 识别")
                 except Exception as exc:
                     warnings.append(f"第 {index} 页 OCR 失败: {exc}")
+
+        # 文本层有大片缺字（日文字体没嵌 ToUnicode，常见于日文 PDF）：整页 OCR 重来
+        if text.strip() and _broken(text) and ocr.available():
+            broken_before = text.count("\ufffd")
+            try:
+                if document is None:
+                    import pypdfium2 as pdfium
+
+                    document = pdfium.PdfDocument(data)
+                ocr_text = ocr.image_to_text(_render_page(data, index), f"{name}-p{index}.png")
+                if ocr_text and ocr_text.count("\ufffd") < broken_before:
+                    text = ocr_text
+                    warnings.append(f"第 {index} 页缺字 {broken_before} 处，已 OCR 重新识别")
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"第 {index} 页补 OCR 失败: {type(exc).__name__}: {exc}")
 
         if text.strip():
             pages.append({"page": index, "text": text})
