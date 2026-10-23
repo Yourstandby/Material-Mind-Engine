@@ -174,9 +174,11 @@ def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, ma
     if where:
         kwargs["where"] = where
 
-    if model:
+    if model or embeddings.ready():
         if not embeddings.ready():
             raise RuntimeError("该知识库由远程 embedding 构建，请配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL")
+        # 集合没写 embedding_model（早期创建的空库）时也走远程 embedding，
+        # 否则 Chroma 会退回内置 all-MiniLM 并尝试联网下载模型。
         result = store.query(query_embeddings=[embeddings.embed_one(query)], **kwargs)
     else:
         result = store.query(query_texts=[query], **kwargs)
@@ -303,6 +305,11 @@ def _resolve(name: str) -> str:
     if not name or name == "all" or str(name).upper() in codes or str(name).lower() in legacy:
         return CATALOG
     return name
+
+
+def resolve_collection(name: str) -> str:
+    """对外公开的归一化：材质名 / 旧库名 / 空值 → 真实集合名。"""
+    return _resolve(name)
 
 
 def source_stats(collection: str = CATALOG) -> list:

@@ -115,7 +115,10 @@ async function ingestFiles(fileList) {
 async function ingestFile(file, row) {
   const form = new FormData();
   form.append("file", file);
-  form.append("collection", state.active);
+  // 注意：这里必须写真实集合名。state.active 是「材质筛选」（all / FFKM / FKM…），
+  // 不是库名；以前直接传它，会把资料写进一个没人读的集合。
+  form.append("collection", "catalog");
+  form.append("material", state.active === "all" ? "" : state.active);
 
   setStage(row, "上传中", 6);
 

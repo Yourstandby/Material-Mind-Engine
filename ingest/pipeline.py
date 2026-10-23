@@ -37,13 +37,14 @@ def serialize(record: dict) -> str:
     return "\n".join(f"{k}: {v}" for k, v in record.items() if v not in (None, "", [], {}))
 
 
-def _meta(record: dict, doc_id: str = "") -> dict:
+def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
     meta = {k: v for k, v in record.items() if isinstance(v, (str, int, float, bool))}
     if doc_id:
         meta["doc_id"] = doc_id
     supplier = str(record.get("supplier") or "")
     grade = str(record.get("grade") or record.get("grade_raw") or "")
-    material = catalog.material_of(str(record.get("composition") or ""), grade)
+    # 抽取结果里没有材质线索时，用上传时前端选中的材质兜底（选「全部」则为空）
+    material = catalog.material_of(str(record.get("composition") or ""), grade, fallback=material_hint)
     meta["product_id"] = catalog.product_key(supplier, grade)
     meta["product_name"] = catalog.product_name(supplier, grade)
     meta["material"] = material
@@ -191,7 +192,7 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
     store.upsert(
         ids=ids,
         documents=documents,
-        metadatas=[_meta(r, did) for r in keep],
+        metadatas=[_meta(r, did, material_hint) for r in keep],
         embeddings=vectors,
     )
     if not known:  # 旧库没有元数据时补写，防止查询回退到默认嵌入

@@ -27,6 +27,7 @@ from core.query_engine import (
     material_stats,
     product_stats,
     records_of,
+    resolve_collection,
     retrieve,
     retrieve_scored,
     sample_records,
@@ -98,6 +99,10 @@ async def ingest_file(
 ):
     data = await file.read()
     filename = file.filename or "upload"
+
+    # 前端可能把「材质筛选」（all / FFKM / FKM …）当成库名传上来，
+    # 统一归一到真实的产品库；否则资料会写进一个没人读的集合（历史上出现过）。
+    collection = resolve_collection(collection)
 
     # 保存原始文件，供「重新解析」与排查使用
     saved = Path("inbox") / "_done" / collection
