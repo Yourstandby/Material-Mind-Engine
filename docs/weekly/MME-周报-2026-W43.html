@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MME 周报 · 2026-W43</title>
+<style>
+  :root{
+    --paper:#F7F6F3;
+    --surface:#FFFFFF;
+    --ink:#14130F;
+    --ink2:#3D3B35;
+    --muted:#8A8579;
+    --rule:#E4E1D8;
+    --rule-strong:#D3CFC3;
+    --accent:#C2410C;
+    --ok:#15803D;
+    --warn:#B45309;
+    --sans:"Microsoft YaHei UI","Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif;
+    --mono:Consolas,"SF Mono","JetBrains Mono",ui-monospace,monospace;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:15px;
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:1080px;margin:0 auto;padding:72px 48px 88px}
+
+  /* ---------- 封面 ---------- */
+  .cover{padding-bottom:56px;border-bottom:1px solid var(--rule-strong)}
+  .eyebrow{
+    display:block;font-family:var(--mono);font-size:11px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .cover h1{
+    margin:20px 0 0;font-size:56px;line-height:1.05;letter-spacing:-.02em;font-weight:700;
+  }
+  .cover .lead{margin:18px 0 0;font-size:19px;color:var(--ink2);max-width:46em}
+  .cover .meta{
+    display:flex;flex-wrap:wrap;gap:8px 26px;margin-top:26px;
+    font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.04em;
+  }
+  .cover .meta span{display:flex;align-items:center;gap:26px}
+  .cover .meta span + span::before{content:"";width:4px;height:4px;border-radius:50%;background:var(--rule-strong);margin-right:-14px}
+
+  /* ---------- 分区 ---------- */
+  section{margin-top:72px}
+  .sec-head{
+    display:flex;align-items:baseline;justify-content:space-between;gap:24px;
+    padding-bottom:14px;border-bottom:1px solid var(--rule-strong);
+  }
+  .sec-head h2{margin:0;font-size:26px;line-height:1.25;letter-spacing:-.01em}
+  .sec-head .eyebrow{white-space:nowrap}
+  .lede{margin:24px 0 0;max-width:62em;font-size:16px;color:var(--ink2)}
+  .lede strong{color:var(--ink)}
+
+  /* ---------- KPI ---------- */
+  .kpis{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:40px;
+  }
+  .kpi{padding:0 24px}
+  .kpi:first-child{padding-left:0}
+  .kpi + .kpi{border-left:1px solid var(--rule)}
+  .kpi .label{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .kpi .value{margin-top:10px;font-family:var(--mono);font-size:38px;line-height:1.1;font-weight:700;letter-spacing:-.02em}
+  .kpi .value small{font-size:16px;font-weight:400;color:var(--muted);letter-spacing:0}
+  .kpi .note{margin-top:8px;font-size:12.5px;color:var(--muted);line-height:1.5}
+
+  /* ---------- 交付卡片 ---------- */
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:32px}
+  .card{
+    background:var(--surface);border:1px solid var(--rule);border-radius:12px;
+    padding:24px 26px 26px;transition:border-color .18s ease, transform .18s ease;
+  }
+  .card:hover{border-color:#D8CFC2;transform:translateY(-1px)}
+  .card .idx{font-family:var(--mono);font-size:11px;letter-spacing:.14em;color:var(--accent)}
+  .card h3{margin:10px 0 0;font-size:17px;line-height:1.4;letter-spacing:-.01em}
+  .card p{margin:10px 0 0;font-size:13.5px;line-height:1.75;color:var(--ink2)}
+  .card.wide{grid-column:1 / -1}
+
+  /* ---------- 表格 ---------- */
+  table{width:100%;border-collapse:collapse;margin-top:28px}
+  th{
+    font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);font-weight:400;text-align:left;padding:0 14px 10px 0;
+    border-bottom:1px solid var(--rule-strong);
+  }
+  td{padding:14px 14px 14px 0;border-bottom:1px solid var(--rule);font-size:14px;color:var(--ink2);vertical-align:top}
+  td:first-child{color:var(--ink);font-weight:600}
+  td.num{font-family:var(--mono);font-size:13px;color:var(--ink);white-space:nowrap}
+  th:last-child,td:last-child{padding-right:0}
+  tbody tr:hover td{background:#FBFAF7}
+
+  /* ---------- 风险 ---------- */
+  .risks{list-style:none;margin:26px 0 0;padding:0}
+  .risks li{display:grid;grid-template-columns:64px 1fr;gap:18px;padding:16px 0;border-bottom:1px solid var(--rule)}
+  .risks li:first-child{padding-top:6px}
+  .tag{
+    align-self:start;justify-self:start;font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    padding:2px 8px;border-radius:999px;border:1px solid currentColor;
+  }
+  .tag.high{color:var(--accent)}
+  .tag.mid{color:var(--warn)}
+  .tag.low{color:var(--muted)}
+  .risks b{display:block;font-size:14.5px;font-weight:600;color:var(--ink)}
+  .risks span{display:block;margin-top:4px;font-size:13.5px;color:var(--muted)}
+
+  /* ---------- 下周 ---------- */
+  .next{list-style:none;counter-reset:step;margin:26px 0 0;padding:0}
+  .next li{
+    counter-increment:step;display:grid;grid-template-columns:44px 1fr;gap:16px;
+    padding:16px 0;border-bottom:1px solid var(--rule);align-items:baseline;
+  }
+  .next li::before{
+    content:counter(step,decimal-leading-zero);font-family:var(--mono);font-size:12px;
+    color:var(--accent);letter-spacing:.08em;
+  }
+  .next b{font-size:14.5px;font-weight:600}
+  .next span{display:block;margin-top:2px;font-size:13.5px;color:var(--muted)}
+
+  /* ---------- 提交记录 ---------- */
+  details{margin-top:26px;border:1px solid var(--rule);border-radius:12px;background:var(--surface)}
+  summary{
+    cursor:pointer;list-style:none;padding:18px 24px;display:flex;justify-content:space-between;
+    align-items:center;font-size:14px;font-weight:600;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"展开";font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.1em}
+  details[open] summary::after{content:"收起"}
+  details[open] summary{border-bottom:1px solid var(--rule)}
+  details .table-wrap{padding:4px 24px 20px}
+  details table{margin-top:12px}
+  details td{padding:9px 14px 9px 0;font-size:13px}
+  details td:first-child{font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:400;white-space:nowrap}
+  details td.hash{font-family:var(--mono);font-size:12px;color:var(--muted)}
+
+  /* ---------- 页脚 ---------- */
+  footer{
+    margin-top:80px;padding-top:18px;border-top:1px solid var(--rule-strong);
+    display:flex;flex-wrap:wrap;gap:8px 24px;justify-content:space-between;
+    font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.04em;
+  }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width:760px){
+    .page{padding:44px 22px 64px}
+    .cover h1{font-size:36px}
+    .cover .lead{font-size:16px}
+    section{margin-top:52px}
+    .sec-head{flex-direction:column;gap:6px;align-items:flex-start}
+    .kpis{grid-template-columns:1fr 1fr;row-gap:28px}
+    .kpi{padding:0 18px}
+    .kpi:nth-child(odd){padding-left:0}
+    .kpi:nth-child(3){border-left:0}
+    .cards{grid-template-columns:1fr}
+    .risks li{grid-template-columns:1fr;gap:8px}
+  }
+
+  /* ---------- 打印 ---------- */
+  @media print{
+    @page{size:A4;margin:14mm}
+    body{background:#fff;font-size:12.5px}
+    .page{max-width:none;padding:0}
+    section{margin-top:26px;break-inside:avoid}
+    .card,details{break-inside:avoid}
+    .card:hover{transform:none}
+    details{border-color:var(--rule)}
+    footer{margin-top:30px}
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+  <header class="cover">
+    <span class="eyebrow">Weekly Report · 2026-W43</span>
+    <h1>Material Mind Engine</h1>
+    <p class="lead">本地化部署落地，日语资料可读、可答、可展示</p>
+    <div class="meta">
+      <span>2026-10-19 → 10-25</span>
+      <span>v2.1.x</span>
+      <span>6 / 6 服务在线</span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <h2>本周概览</h2>
+      <span class="eyebrow">01 / Overview</span>
+    </div>
+    <p class="lede">
+      本周把 MME 从「能跑」推到「能对内网交付」：六个服务在本机 <strong>2 × L20</strong> 上跑通，模型统一走网关 API Key；
+      知识库累计 <strong>251 条</strong>结构化记录，覆盖 Syensqo 与 NOK 两家资料。日语资料从「认不出假名」到「可读、可答、展示中文」，
+      检索层补上厂商过滤，不再拿别家产品顶包。
+    </p>
+    <div class="kpis">
+      <div class="kpi">
+        <div class="label">Commits</div>
+        <div class="value">26</div>
+        <div class="note">本周提交，10-20 → 10-23</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Changes</div>
+        <div class="value">+7,609<small> / −275</small></div>
+        <div class="note">新增 / 删除代码行</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Records</div>
+        <div class="value">251</div>
+        <div class="note">3 篇文档 · 2 家厂商</div>
+      </div>
+      <div class="kpi">
+        <div class="label">Services</div>
+        <div class="value">6<small> / 6</small></div>
+        <div class="note">Web · 网关 · OCR · Embedding · LLM · Chroma</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>本周交付</h2>
+      <span class="eyebrow">02 / Delivered</span>
+    </div>
+    <div class="cards">
+      <article class="card">
+        <div class="idx">01</div>
+        <h3>本地全栈部署</h3>
+        <p>2 × L20 单机跑通 LLM / Embedding / OCR / Chroma / 网关 / Web，全部模型走网关；一键启停、健康检查与本地备份脚本齐备。端口固定为 8100 / 8101 / 8002 / 8010 / 8001 / 8300。</p>
+      </article>
+      <article class="card">
+        <div class="idx">02</div>
+        <h3>网关与密钥</h3>
+        <p>每个 API Key 在途上限 2，超限直接返回 429、不排队；模型服务只绑 127.0.0.1，对外只开 8100 / 8300，防火墙限同网段。</p>
+      </article>
+      <article class="card">
+        <div class="idx">03</div>
+        <h3>投喂链路</h3>
+        <p>6 种格式解析 → 800 字分块 → LLM 抽取 11 个字段 → 牌号与供应商归一 → 内容哈希去重 → 向量入库；AES 加密 PDF 自动回落 pdfium。</p>
+      </article>
+      <article class="card">
+        <div class="idx">04</div>
+        <h3>日语资料</h3>
+        <p>OCR 换 PP-OCRv5，单页假名识别从 29 提升到 370；日语词表把「潤滑油」「72時間」等转成中文，牌号保留原文，回答统一中文。</p>
+      </article>
+      <article class="card wide">
+        <div class="idx">05</div>
+        <h3>检索与回答</h3>
+        <p>问题点名厂商时按 supplier 过滤（NOK / 索尔维 / 大金 / 科慕 / Parker / NICHIAS），查不到就明确说「库里没有」；证据行自动转表格，引用只列正文出现的 [n]，测试条件不跨记录拼接。</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>关键指标</h2>
+      <span class="eyebrow">03 / Metrics</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>指标</th><th>本周</th><th>说明</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>知识库记录</td><td class="num">251 条</td><td>Syensqo 124 · NOK 115 · 未标注 12</td></tr>
+        <tr><td>覆盖材质</td><td class="num">4 类</td><td>氟橡胶 212 · 丁腈橡胶 19 · 全氟醚橡胶 14 · 硅橡胶 6</td></tr>
+        <tr><td>服务可用</td><td class="num">6 / 6</td><td>Web · 网关 · OCR · Embedding · LLM · Chroma</td></tr>
+        <tr><td>日语识别</td><td class="num">29 → 370</td><td>同一页假名数，PP-OCRv5 对比旧 v4 中文模型</td></tr>
+        <tr><td>单页 OCR</td><td class="num">5–12 s</td><td>220–300 DPI，纯 CPU</td></tr>
+        <tr><td>大文档抽取</td><td class="num">≈ 25 min</td><td>103 页 / 371 块，约 4 s/块</td></tr>
+        <tr><td>本周提交</td><td class="num">26 次</td><td>+7,609 / −275 行</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>风险与遗留</h2>
+      <span class="eyebrow">04 / Risks</span>
+    </div>
+    <ul class="risks">
+      <li>
+        <span class="tag high">高</span>
+        <div><b>第二张 L20 在 PCI 层不可见</b><span>目前 LLM 单卡运行；待排查 BIOS、供电与 riser。</span></div>
+      </li>
+      <li>
+        <span class="tag mid">中</span>
+        <div><b>NOK 压缩永久变形表 71 条缺牌号</b><span>表头跨行导致列对不齐；已加表头提示（HEAD_HINTS），待重跑验证。</span></div>
+      </li>
+      <li>
+        <span class="tag mid">中</span>
+        <div><b>重抽取期间问答会 429</b><span>网关每个 Key 只有 2 个并发位，抽取占满后问答直接失败，不排队。</span></div>
+      </li>
+      <li>
+        <span class="tag low">低</span>
+        <div><b>日文 PDF 文本层缺字</b><span>字体未嵌 ToUnicode；轻微缺字保留文本层（牌号更完整），严重缺字才整页 OCR。</span></div>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>下周计划</h2>
+      <span class="eyebrow">05 / Next</span>
+    </div>
+    <ol class="next">
+      <li><div><b>NOK 重跑并验证牌号补全</b><span>重点核对 A305 / A105 / A122 与压缩永久变形数值的对应关系。</span></div></li>
+      <li><div><b>E10.pdf 入库</b><span>补齐 E10 系列数据，验证 AES 加密 PDF 的解析链路。</span></div></li>
+      <li><div><b>20 题检索评测集回归</b><span>锁定召回率基线，改动分块与提示词后先跑回归再上线。</span></div></li>
+      <li><div><b>第二张 L20 排查</b><span>BIOS / 供电 / riser 逐个排除，恢复双卡推理。</span></div></li>
+    </ol>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>提交记录</h2>
+      <span class="eyebrow">06 / Log</span>
+    </div>
+    <details>
+      <summary>本周 26 次提交</summary>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td>10-23</td><td class="hash">3161f20</td><td>fix(retrieve): 问题点名厂商时按 supplier 过滤，不能拿别家产品顶替</td></tr>
+            <tr><td>10-23</td><td class="hash">523ca2c</td><td>feat(i18n): 日语资料可识别、可入库，展示统一中文</td></tr>
+            <tr><td>10-23</td><td class="hash">71988f8</td><td>fix(parse): AES 加密 PDF 走 pdfium 兜底解析</td></tr>
+            <tr><td>10-23</td><td class="hash">a63ffa8</td><td>fix(ui): 引用只列正文真正引用到的编号，且等正文结束再出现</td></tr>
+            <tr><td>10-23</td><td class="hash">cb622ec</td><td>feat(ui): 证据行自动渲染为表格，数据对比一眼看清</td></tr>
+            <tr><td>10-23</td><td class="hash">7426ed0</td><td>fix(answer): 冲突判定收紧、测试温度补单位、空数据行按需输出</td></tr>
+            <tr><td>10-23</td><td class="hash">cc45f19</td><td>fix: 产品列显示牌号；同牌号多测试拆成多条记录</td></tr>
+            <tr><td>10-23</td><td class="hash">d2ad8d8</td><td>fix(ingest): 抽取用的页面表头改为「特性 单位 …」那一行</td></tr>
+            <tr><td>10-23</td><td class="hash">89b19fd</td><td>fix(ui): 逐行证据不再挤成一团；材质写中文、禁止跨记录拼接条件</td></tr>
+            <tr><td>10-23</td><td class="hash">6979d47</td><td>feat(retrieval): 记录补材质 / 供应商 + 中文标签向量化</td></tr>
+            <tr><td>10-23</td><td class="hash">121c037</td><td>fix: 上传写入真实库 catalog，修复「上传成功但资料库为空」</td></tr>
+            <tr><td>10-23</td><td class="hash">be0825a</td><td>docs: 排查表补 DuplicateIDError 一行</td></tr>
+            <tr><td>10-23</td><td class="hash">ad554a0</td><td>fix(ingest): 文档内重复记录导致 Chroma DuplicateIDError</td></tr>
+            <tr><td>10-21</td><td class="hash">4481c92</td><td>feat(deploy): 一键本地备份 backup.ps1（git bundle + .env 副本）</td></tr>
+            <tr><td>10-21</td><td class="hash">5d9197f</td><td>docs: 一页纸接入说明，README 增加入口</td></tr>
+            <tr><td>10-21</td><td class="hash">9c2769f</td><td>docs(deploy): 新电脑接入五步 + open-firewall.ps1</td></tr>
+            <tr><td>10-20</td><td class="hash">10c34e3</td><td>fix(deploy): Stop-PidFile 连子进程一起杀，避免孤儿进程占端口</td></tr>
+            <tr><td>10-20</td><td class="hash">96a62d0</td><td>feat(gateway,deploy): 每 Key 并发闸门 + Chroma server 模式 + LLM 4 并发槽</td></tr>
+            <tr><td>10-20</td><td class="hash">3cdaa48</td><td>fix(clients): check_lan.py 默认读取同目录 mme-client.env</td></tr>
+            <tr><td>10-20</td><td class="hash">2eb9616</td><td>docs: 局域网接入说明与客户端配置</td></tr>
+            <tr><td>10-20</td><td class="hash">8041d52</td><td>feat(deploy): 本机离线部署（OCR 兜底 + 一键启停 + 网关接入）</td></tr>
+            <tr><td>10-20</td><td class="hash">79fc850</td><td>test: 20 题 RAG 评测集与检索基线</td></tr>
+            <tr><td>10-20</td><td class="hash">862480a</td><td>docs: 按当前架构重写 CONTRIBUTING</td></tr>
+            <tr><td>10-20</td><td class="hash">e97cd49</td><td>docs: 补 CHANGELOG（v2.1.0 / v2.0.0）</td></tr>
+            <tr><td>10-20</td><td class="hash">1edd373</td><td>docs: v2.1.0 发布说明与新模块清单</td></tr>
+            <tr><td>10-20</td><td class="hash">bdc6862</td><td>feat: 产品目录、内部认证、并发向量库、模型网关</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+
+  <footer>
+    <span>MME · 内部资料</span>
+    <span>生成 2026-10-25 · 数据源 git log / catalog / 部署状态</span>
+  </footer>
+
+</main>
+</body>
+</html>
