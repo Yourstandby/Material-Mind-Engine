@@ -22,7 +22,7 @@ import uuid
 
 DEFAULT_BASE = os.environ.get("MME_BASE_URL", "http://172.16.1.210:8100/v1")
 DEFAULT_KEY = os.environ.get("MME_API_KEY", "")
-DEFAULT_MODEL = os.environ.get("MME_LLM_MODEL", "qwen2.5-72b-instruct")
+DEFAULT_MODEL = os.environ.get("MME_LLM_MODEL", "qwen3-30b")
 DEFAULT_EMBED = os.environ.get("MME_EMBED_MODEL", "bge-m3")
 
 

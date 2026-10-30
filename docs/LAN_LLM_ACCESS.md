@@ -9,7 +9,7 @@ OpenAI 兼容接口，把下面三项填进任意 OpenAI SDK 即可：
 
 ```text
 BASE_URL = http://172.16.1.210:8100/v1
-MODEL    = qwen2.5-72b-instruct
+MODEL    = qwen3-30b
 API_KEY  = <单独发给你的 key，勿写入代码仓库>
 ```
 
@@ -19,9 +19,9 @@ API_KEY  = <单独发给你的 key，勿写入代码仓库>
 |---|---|
 | Base URL | `http://172.16.1.210:8100/v1` |
 | 鉴权 | `Authorization: Bearer <API_KEY>`（`/v1/*` 与 `/ocr` 都校验） |
-| 对话模型 | `qwen2.5-72b-instruct` |
+| 对话模型 | `qwen3-30b` |
 | 向量模型 | `bge-m3`（1024 维） |
-| 单请求上下文 | 32,768 tokens（服务端 4 个槽位，每槽 32k） |
+| 单请求上下文 | 16,384 tokens（服务端 4 个槽位，每槽 4,096） |
 | 并发 | 每个 Key 最多 2 个在途请求，超出立即 429，不排队 |
 | 速率 | 每个 Key 120 次/分钟 |
 | 传输 | 内网 HTTP；流式走 SSE（`text/event-stream`） |
@@ -31,7 +31,7 @@ API_KEY  = <单独发给你的 key，勿写入代码仓库>
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/models` | 模型列表，返回 `qwen2.5-72b-instruct` |
+| GET | `/v1/models` | 模型列表，返回上游模型 id（当前 build 返回 GGUF 文件名） |
 | POST | `/v1/chat/completions` | 对话；`"stream": true` 时返回 SSE |
 | POST | `/v1/embeddings` | 文本向量，`model: "bge-m3"`，1024 维，支持批量 |
 | POST | `/ocr` | 图片 OCR，`multipart/form-data`，字段名 `file` |
@@ -55,7 +55,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="qwen2.5-72b-instruct",
+    model="qwen3-30b",
     messages=[
         {"role": "system", "content": "你是一个严谨的工程师。"},
         {"role": "user", "content": "用三句话说明氟橡胶的耐温范围。"},
@@ -70,7 +70,7 @@ print(resp.choices[0].message.content)
 
 ```python
 stream = client.chat.completions.create(
-    model="qwen2.5-72b-instruct",
+    model="qwen3-30b",
     messages=[{"role": "user", "content": "写一段 100 字的项目简介"}],
     temperature=0.3,
     max_tokens=512,
@@ -88,7 +88,7 @@ curl -s http://172.16.1.210:8100/v1/chat/completions \
   -H "Authorization: Bearer $MME_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "qwen2.5-72b-instruct",
+    "model": "qwen3-30b",
     "messages": [{"role": "user", "content": "你好"}],
     "temperature": 0.2,
     "max_tokens": 256
@@ -99,7 +99,7 @@ curl -s http://172.16.1.210:8100/v1/chat/completions \
 
 ```powershell
 $body = @{
-  model    = "qwen2.5-72b-instruct"
+  model    = "qwen3-30b"
   messages = @(@{ role = "user"; content = "你好" })
   max_tokens = 256
 } | ConvertTo-Json -Depth 5
@@ -123,7 +123,7 @@ const res = await fetch(`${BASE}/chat/completions`, {
   method: "POST",
   headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` },
   body: JSON.stringify({
-    model: "qwen2.5-72b-instruct",
+    model: "qwen3-30b",
     messages: [{ role: "user", content: "你好" }],
     stream: true,
     max_tokens: 512,
@@ -214,12 +214,12 @@ def post_with_retry(url: str, payload: dict, key: str, attempts: int = 3):
 
 1. **必须设置超时**。网关对上游是无限等待，上游卡住时请求会一直挂着。建议：连接 5 s，非流式总超时 120 s，流式按“无新数据 120 s”判死。
 2. **必须显式设置 `max_tokens`**。不设时服务端会一直生成到 EOS，长回答会把槽位占满。
-3. **上下文 32k tokens**（含输入 + 输出）。长文档要先切块，不要把整篇塞进去。
+3. **上下文 16k tokens**（含输入 + 输出）。长文档要先切块，不要把整篇塞进去。
 4. **并发上限 2**。批量任务用 2 个 worker 的队列；需要更高并发时申请独立 key，而不是多开线程。
 5. **温度**：抽取 / 问答建议 `0.1–0.3`；服务端默认是 `0.8`，不传会偏发散。
 6. **流式响应里不要依赖 `usage`**（默认不返回）；需要 token 数时用非流式或在客户端自行估算。
 7. **不要自行拼接 Qwen 的 special token**；服务端会用模型自带的 chat template。
-8. **model 字段必须写 `qwen2.5-72b-instruct`**，写错会 400。
+8. **model 字段写 `qwen3-30b` 即可**；当前 build 不校验模型名，任何字符串都能出结果，但请统一写法避免日志混乱。
 
 ## 7. 其他端点
 
@@ -270,7 +270,7 @@ curl -s http://172.16.1.210:8100/ocr \
 | # | 检查 | 期望 |
 |---|---|---|
 | 1 | `GET /health` | `{"ok": true}` |
-| 2 | `GET /v1/models` 带 key | 列表含 `qwen2.5-72b-instruct` |
+| 2 | `GET /v1/models` 带 key | 返回上游模型 id |
 | 3 | 非流式 chat | 200，`choices[0].message.content` 非空 |
 | 4 | 流式 chat | 连续 `data:` 帧，最后 `data: [DONE]` |
 | 5 | 同时发 3 个请求 | 第 3 个返回 429，且带 `Retry-After` |
@@ -296,10 +296,10 @@ python -m scripts.make_key --revoke <id>
 为一个局域网项目接入 OpenAI 兼容的 LLM 服务，按以下约束实现客户端：
 
 - Base URL: http://172.16.1.210:8100/v1
-- 模型: qwen2.5-72b-instruct（向量模型 bge-m3，1024 维）
+- 模型: qwen3-30b（向量模型 bge-m3，1024 维）
 - 鉴权: Authorization: Bearer <MME_API_KEY>，key 从环境变量读，禁止硬编码
 - 每个 key 最多 2 个在途请求；第 3 个立即返回 429（带 Retry-After: 2），不排队
-- 限速 120 次/分钟；单请求上下文 32,768 tokens
+- 限速 120 次/分钟；单请求上下文 16,384 tokens
 - 必须显式设置 max_tokens 与超时（连接 5s，非流式 120s）
 - 429 与 5xx 做指数退避重试（最多 3 次，尊重 Retry-After）；400/401 不重试
 - 流式用 SSE：逐行解析 "data: "，以 "data: [DONE]" 结束；连接关闭但无 [DONE] 视为失败并重试整次请求

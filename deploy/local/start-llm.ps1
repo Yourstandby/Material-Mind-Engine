@@ -27,8 +27,8 @@ if ($Ctx -eq 0) { $Ctx = [int](Get-Cfg "MME_LLM_CTX" "65536") }
 if ($Threads -eq 0) { $Threads = [int](Get-Cfg "MME_LLM_THREADS" "32") }
 
 $bin = Get-Cfg "MME_LLM_BIN" "D:\models\llamacpp\bin\llama-server.exe"
-$gguf = Get-Cfg "MME_LLM_GGUF" "D:\models\qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf"
-$alias = Get-Cfg "MME_LLM_ALIAS" "qwen2.5-72b-instruct"
+$gguf = Get-Cfg "MME_LLM_GGUF" "D:\models\gguf\Qwen3-30B-A3B-Instruct-2507-UD-Q4_K_XL.gguf"
+$alias = Get-Cfg "MME_LLM_ALIAS" "qwen3-30b"
 
 if (-not (Test-Path $bin)) { throw "找不到 llama-server: $bin（改 .env 的 MME_LLM_BIN）" }
 if (-not (Test-Path $gguf)) { throw "找不到模型文件: $gguf（改 .env 的 MME_LLM_GGUF）" }

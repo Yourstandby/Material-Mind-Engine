@@ -11,7 +11,7 @@
 浏览器 ──► MME Web            0.0.0.0:8300   （内网同事用）
               │
               ├─► 网关        0.0.0.0:8100     API Key / 限流 / 并发闸门 / 用量统计
-              │     ├─► LLM      127.0.0.1:8010  llama.cpp + qwen2.5-72b（4 槽 ×32K）
+              │     ├─► LLM      127.0.0.1:8086  llama.cpp + qwen3-30b（4 槽 ×4K）
               │     ├─► Embed    127.0.0.1:8002  llama.cpp + bge-m3
               │     └─► OCR      127.0.0.1:8101  RapidOCR（CPU）
               │
@@ -24,16 +24,16 @@
 |---|---|---|---|
 | 8300 | MME Web | 0.0.0.0 | 给同事用 |
 | 8100 | 网关 | 0.0.0.0 | 给别的系统接模型用 |
-| 8010 | LLM | 127.0.0.1 | 只给网关 |
+| 8086 | LLM（llama.cpp + Qwen3-30B-A3B） | 0.0.0.0 | 只给网关用 |
 | 8002 | Embedding | 127.0.0.1 | 只给网关 |
 | 8101 | OCR | 127.0.0.1 | 只给网关 / MME |
 | 8001 | Chroma server | 127.0.0.1 | 只给 MME 本机进程 |
 
-> 本机 8000 被既有 reagent-app（Docker）映射占用，所以 LLM 用 8010。
+> 本机 8000 被既有 reagent-app（Docker）映射占用，新 LLM 服务固定用 8086。
 > 如果 8000 空出来，把 `.env` 的 `MME_PORT_LLM` 和 `UPSTREAM_LLM` 一起改回 8000 即可。
 
 > **2026-10-20 已完成切换**：原 8000 端口上的 llama-server（PID 38168）已停止，
-> 现由 `start-llm.ps1` 在 **8010** 上运行调优配置（4 槽 ×32K、q8_0 KV、只绑 127.0.0.1）。
+> LLM 由 `start-llm.ps1` 在 **8086** 上提供（4 槽 ×4K、q8_0 KV）。
 > 8000 端口已归还给 Docker 的 reagent-app。
 >
 > 要把模型服务给别的项目用，见 [LAN_ACCESS.md](LAN_ACCESS.md)。
@@ -45,13 +45,13 @@
 
 | 组件 | 模型 | 文件 | 显存/内存 | 备注 |
 |---|---|---|---|---|
-| LLM | Qwen2.5-72B-Instruct Q4_K_M | `D:\models\qwen2.5-72b-instruct-q4_k_m-00001~12.gguf`（44 GB） | ~64 GB 双卡 | 4 槽 ×32K，单路 ~11–16 tok/s |
+| LLM | Qwen3-30B-A3B-Instruct-2507 UD-Q4_K_XL | `D:\models\gguf\Qwen3-30B-A3B-Instruct-2507-UD-Q4_K_XL.gguf`（17.7 GB） | 单卡 24 GB 即可 | 4 槽 ×4K；MoE 每步只激活约 3B，单路比 72B 稠密快得多 |
 | Embedding | bge-m3 FP16 | `D:\models\bge-m3\bge-m3-FP16.gguf`（1.16 GB） | ~2 GB | 1024 维，8192 上下文，**必须 CLS pooling** |
 | OCR | RapidOCR（PP-OCRv4 ONNX） | 随 pip 包装 | CPU | 中英文，300 DPI 渲染 |
 | 运行时 | llama.cpp `0.7.0-dev` build 11696 | `D:\models\llamacpp\bin` | CUDA 12.8 | 驱动 572.83 |
 | 向量库 | Chroma 1.4.4（server 模式） | `./chroma_db` + `127.0.0.1:8001` | 磁盘 | 独立进程统一调度 |
 
-显存账（2×46 GB = 92 GB）：LLM 权重 44 GB + KV（q8_0，4 槽 ×32K）约 20 GB + 计算缓冲约 6 GB ≈ 70 GB；bge-m3 约 2 GB。实测占用 34.9 + 33.8 = 68.7 GB，余量约 23 GB。
+显存账：Qwen3-30B-A3B Q4 权重约 17.7 GB；4 槽 ×4K 的 KV（q8_0）只有几百 MB，另加计算缓冲；bge-m3 约 2 GB。单卡 24 GB 足够，显存富余就把 `.env` 的 `MME_LLM_CTX` 调大换更长上下文。
 
 ---
 
@@ -130,7 +130,7 @@ Remove-Item -Recurse -Force inbox\_done\*
 # MME 侧：全部走网关
 OPENAI_BASE_URL=http://127.0.0.1:8100/v1
 OPENAI_API_KEY=mme-xxxx
-LLM_MODEL=qwen2.5-72b-instruct
+LLM_MODEL=qwen3-30b
 
 EMBEDDING_BASE_URL=http://127.0.0.1:8100/v1
 EMBEDDING_API_KEY=mme-xxxx          # 可以和上面同一把
@@ -140,7 +140,7 @@ EMBEDDING_DIM=1024
 OCR_BASE_URL=http://127.0.0.1:8101  # 留空 = 不启用 OCR
 
 # 网关侧：上游真实模型服务
-UPSTREAM_LLM=http://127.0.0.1:8010/v1
+UPSTREAM_LLM=http://127.0.0.1:8086/v1
 UPSTREAM_EMBED=http://127.0.0.1:8002/v1
 UPSTREAM_OCR=http://127.0.0.1:8101
 GATEWAY_ADMIN_TOKEN=随机串
@@ -157,12 +157,12 @@ MME_PORT_WEB=8300
 MME_PORT_GATEWAY=8100
 MME_PORT_OCR=8101
 MME_PORT_EMBED=8002
-MME_PORT_LLM=8010
+MME_PORT_LLM=8086
 MME_PORT_CHROMA=8001
 MME_LLM_BIN=D:\models\llamacpp\bin\llama-server.exe
-MME_LLM_GGUF=D:\models\qwen2.5-72b-instruct-q4_k_m-00001-of-00012.gguf
+MME_LLM_GGUF=D:\models\qwen3-30b-q4_k_m-00001-of-00012.gguf
 MME_LLM_NP=4                  # 并发槽
-MME_LLM_CTX=131072            # 总上下文（每槽 = CTX/NP）
+MME_LLM_CTX=16384            # 总上下文（每槽 = CTX/NP）
 MME_EMBED_GGUF=D:\models\bge-m3\bge-m3-FP16.gguf
 ```
 
@@ -190,7 +190,7 @@ Rename-Item chroma_db chroma_db.bak
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://<服务器IP>:8100/v1", api_key="mme-xxxx")
-client.chat.completions.create(model="qwen2.5-72b-instruct", messages=[...])
+client.chat.completions.create(model="qwen3-30b", messages=[...])
 client.embeddings.create(model="bge-m3", input=["..."])   # 1024 维
 ```
 
@@ -241,11 +241,11 @@ LLM（`start-llm.ps1`）：
 |---|---|---|
 | `-ngl 99` | 全量上卡 | 少一层都会掉到 1 tok/s |
 | `-np` | 4 | 并发槽。多槽会让单路变慢，按人数调（.env `MME_LLM_NP`） |
-| `-c` | 131072（4×32K） | 每槽 32K；再大要改 rope 且模型原生只有 32K |
+| `-c` | 16384（4×4K） | 每槽 4K；Qwen3-30B-A3B 原生支持 262144，显存允许就把 `.env` 的 `MME_LLM_CTX` 调大 |
 | `--cache-type-k/v q8_0` | 开 | KV 显存减半，配合 `-fa on` |
 | `-t 32` | 32 | 双路 Xeon 6230R（52 线程）留余量给 Web/OCR |
 
-实测（4 槽）：72B Q4 单路 **~11–16 tok/s**，prompt 处理约 **330 tok/s**（3K 上下文的问答首字 ≈ 10 s）。
+实测（4 槽，Qwen3-30B-A3B Q4）：MoE 每步只激活约 3B 参数，单路吞吐远高于原 72B 稠密模型；首字延迟仍随 prompt 长度增长。
 4 路并发同时跑时每路约 3 s 出短答，总吞吐约 25–30 tok/s。
 一次投喂里 LLM 要逐块抽取，**30 个分块约 8–12 分钟**，属于正常；批量导入建议放着跑。
 

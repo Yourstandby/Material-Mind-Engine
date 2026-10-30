@@ -78,8 +78,13 @@ def check_models() -> bool:
     try:
         status, body = call(f"{GATEWAY}/models", key=KEY)
         ids = [item["id"] for item in body.get("data", [])]
-        record("API Key + 模型列表", status == 200 and bool(ids), f"{ids}")
-        return LLM in ids
+        # llama.cpp 单模型部署时 /v1/models 返回的是 GGUF 文件名，且不校验请求里的 model 字段，
+        # 所以“配的模型名不在列表里”本身不算失败；真正能否用由后面的对话检查决定。
+        listed = LLM in ids
+        ok = status == 200 and bool(ids) and (listed or len(ids) == 1)
+        note = "" if listed else f"（单模型上游，请求里按 {LLM} 发即可）"
+        record("API Key + 模型列表", ok, f"{ids}{note}")
+        return ok
     except Exception as exc:  # noqa: BLE001
         record("API Key + 模型列表", False, str(exc))
         return False
