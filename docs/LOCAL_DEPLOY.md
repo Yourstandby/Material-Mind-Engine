@@ -11,7 +11,7 @@
 浏览器 ──► MME Web            0.0.0.0:8300   （内网同事用）
               │
               ├─► 网关        0.0.0.0:8100     API Key / 限流 / 并发闸门 / 用量统计
-              │     ├─► LLM      127.0.0.1:8086  llama.cpp + qwen3-30b（4 槽 ×4K）
+              │     ├─► LLM      127.0.0.1:8086  llama.cpp + qwen3-30b（4 槽 ×16K）
               │     ├─► Embed    127.0.0.1:8002  llama.cpp + bge-m3
               │     └─► OCR      127.0.0.1:8101  RapidOCR（CPU）
               │
@@ -33,7 +33,7 @@
 > 如果 8000 空出来，把 `.env` 的 `MME_PORT_LLM` 和 `UPSTREAM_LLM` 一起改回 8000 即可。
 
 > **2026-10-20 已完成切换**：原 8000 端口上的 llama-server（PID 38168）已停止，
-> LLM 由 `start-llm.ps1` 在 **8086** 上提供（4 槽 ×4K、q8_0 KV）。
+> LLM 由 `start-llm.ps1` 在 **8086** 上提供（4 槽 ×16K，f16 KV；`MME_LLM_KV=q8_0` 可再省一半）。
 > 8000 端口已归还给 Docker 的 reagent-app。
 >
 > 要把模型服务给别的项目用，见 [LAN_ACCESS.md](LAN_ACCESS.md)。
@@ -45,13 +45,13 @@
 
 | 组件 | 模型 | 文件 | 显存/内存 | 备注 |
 |---|---|---|---|---|
-| LLM | Qwen3-30B-A3B-Instruct-2507 UD-Q4_K_XL | `D:\models\gguf\Qwen3-30B-A3B-Instruct-2507-UD-Q4_K_XL.gguf`（17.7 GB） | 单卡 24 GB 即可 | 4 槽 ×4K；MoE 每步只激活约 3B，单路比 72B 稠密快得多 |
+| LLM | Qwen3-30B-A3B-Instruct-2507 UD-Q4_K_XL | `D:\models\gguf\Qwen3-30B-A3B-Instruct-2507-UD-Q4_K_XL.gguf`（17.7 GB） | 单卡 24 GB 即可 | 4 槽 ×16K；MoE 每步只激活约 3B，单路比 72B 稠密快得多 |
 | Embedding | bge-m3 FP16 | `D:\models\bge-m3\bge-m3-FP16.gguf`（1.16 GB） | ~2 GB | 1024 维，8192 上下文，**必须 CLS pooling** |
 | OCR | RapidOCR（PP-OCRv4 ONNX） | 随 pip 包装 | CPU | 中英文，300 DPI 渲染 |
 | 运行时 | llama.cpp `0.7.0-dev` build 11696 | `D:\models\llamacpp\bin` | CUDA 12.8 | 驱动 572.83 |
 | 向量库 | Chroma 1.4.4（server 模式） | `./chroma_db` + `127.0.0.1:8001` | 磁盘 | 独立进程统一调度 |
 
-显存账：Qwen3-30B-A3B Q4 权重约 17.7 GB；4 槽 ×4K 的 KV（q8_0）只有几百 MB，另加计算缓冲；bge-m3 约 2 GB。单卡 24 GB 足够，显存富余就把 `.env` 的 `MME_LLM_CTX` 调大换更长上下文。
+显存账：Qwen3-30B-A3B Q4 权重约 17.7 GB；KV 每 token 约 96 KiB（f16，48 层 × 4 KV 头 × 128），64K 总上下文约 6 GB，全集 256K 约 24 GB（q8_0 减半）；另加计算缓冲；bge-m3 约 2 GB。
 
 ---
 
@@ -162,7 +162,7 @@ MME_PORT_CHROMA=8001
 MME_LLM_BIN=D:\models\llamacpp\bin\llama-server.exe
 MME_LLM_GGUF=D:\models\qwen3-30b-q4_k_m-00001-of-00012.gguf
 MME_LLM_NP=4                  # 并发槽
-MME_LLM_CTX=16384            # 总上下文（每槽 = CTX/NP）
+MME_LLM_CTX=65536            # 总上下文（每槽 = CTX/NP）
 MME_EMBED_GGUF=D:\models\bge-m3\bge-m3-FP16.gguf
 ```
 
@@ -241,7 +241,7 @@ LLM（`start-llm.ps1`）：
 |---|---|---|
 | `-ngl 99` | 全量上卡 | 少一层都会掉到 1 tok/s |
 | `-np` | 4 | 并发槽。多槽会让单路变慢，按人数调（.env `MME_LLM_NP`） |
-| `-c` | 16384（4×4K） | 每槽 4K；Qwen3-30B-A3B 原生支持 262144，显存允许就把 `.env` 的 `MME_LLM_CTX` 调大 |
+| `-c` | 65536（4×16K） | 每槽 16K；该模型原生支持 262144（256K），`-np 4` 时即 4×64K |
 | `--cache-type-k/v q8_0` | 开 | KV 显存减半，配合 `-fa on` |
 | `-t 32` | 32 | 双路 Xeon 6230R（52 线程）留余量给 Web/OCR |
 
