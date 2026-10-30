@@ -19,12 +19,7 @@ CATALOG = env("CATALOG_COLLECTION", "catalog")
 TEMP_KEYWORDS = ("耐温", "温度", "temperature")
 TEMP_EXPANSION = "temperature range operating temperature -20 230 °C"
 
-# 材质只是产品的一个属性，用于筛选
-MATERIALS = [
-    {"code": "FFKM", "label": "FFKM", "full": "全氟醚橡胶", "hint": "宽温域 · 耐等离子体"},
-    {"code": "FKM", "label": "FKM", "full": "氟橡胶", "hint": "通用氟弹性体"},
-    {"code": "PEEK", "label": "PEEK", "full": "聚醚醚酮", "hint": "高温工程塑料"},
-]
+# 检索与导航的主单位是产品（供应商 + 牌号），材质只作为产品的属性字段
 
 # 问题里点名的厂商：命中后直接按 supplier 过滤，避免拿别家产品顶替
 SUPPLIER_WORDS = (
@@ -135,29 +130,33 @@ def _model() -> str:
     return model_name()
 
 
-def material_stats() -> list:
-    """按材质统计产品库，用于前端筛选标签。"""
-    try:
-        store = _client().get_or_create_collection(CATALOG)
-        total = store.count()
-    except Exception:
-        store, total = None, 0
-
-    out = [{"name": "all", "code": "all", "label": "全部", "full": "全部产品", "hint": "跨材质检索", "count": total}]
-    for item in MATERIALS:
-        count = 0
-        if store is not None:
-            try:
-                count = len(store.get(where={"material": item["code"]}).get("ids") or [])
-            except Exception:
-                count = 0
-        out.append({**item, "name": item["code"], "count": count})
+def product_options() -> list:
+    """前端导航/筛选用的产品清单：一个产品 = 供应商 + 牌号。"""
+    items = product_stats()
+    total = sum(item["records"] for item in items)
+    out = [
+        {
+            "name": "all",
+            "product_id": "all",
+            "label": "全部产品",
+            "full": "按产品浏览",
+            "hint": "跨产品检索",
+            "count": total,
+        }
+    ]
+    for item in sorted(items, key=lambda p: p["product_name"]):
+        detail = " · ".join(part for part in (item["supplier"], item["material_label"]) if part)
+        out.append(
+            {
+                "name": item["product_id"],
+                "product_id": item["product_id"],
+                "label": item["product_name"],
+                "full": detail or "未标注产品",
+                "hint": detail,
+                "count": item["records"],
+            }
+        )
     return out
-
-
-def collection_stats() -> list:
-    """兼容旧接口，返回材质视图。"""
-    return material_stats()
 
 
 def sample_records(collection: str, limit: int = 30) -> list:
@@ -223,7 +222,13 @@ def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
     return picked[:top_k]
 
 
-def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
+def retrieve_scored(
+    question: str,
+    collection: str = CATALOG,
+    top_k: int = 5,
+    material: str | None = None,
+    product: str | None = None,
+):
     """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。"""
     # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
     if any(word in question for word in ENUM_WORDS):
@@ -232,18 +237,13 @@ def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, ma
 
     query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
-    where = {"material": material} if material and material not in ("all", "") else None
-    if not where:
-        # 问题里点名了一种材质就直接过滤，避免回答「FFKM」时混进 FKM 的数据
-        # 注意：不能用子串判断，"ffkm" 里包含 "fkm"
-        low = question.lower()
-        named = [
-            item["code"]
-            for item in MATERIALS
-            if re.search(rf"(?<![a-z]){item['code'].lower()}(?![a-z])", low)
-        ]
-        if len(named) == 1:
-            where = {"material": named[0]}
+    # 主筛选维度是产品；material 仅供离线评测按属性切片，不再作为分类导航
+    if product and product not in ("all", ""):
+        where = {"product_id": product}
+    elif material and material not in ("all", ""):
+        where = {"material": material}
+    else:
+        where = None
 
     # 聚合类问题（哪些 / 最低 / 对比）需要更宽的召回
     if _is_aggregate(question):
@@ -284,8 +284,14 @@ def retrieve_scored(question: str, collection: str = CATALOG, top_k: int = 5, ma
     return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
 
 
-def retrieve(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None):
-    docs, metas, _scores = retrieve_scored(question, collection, top_k, material)
+def retrieve(
+    question: str,
+    collection: str = CATALOG,
+    top_k: int = 5,
+    material: str | None = None,
+    product: str | None = None,
+):
+    docs, metas, _scores = retrieve_scored(question, collection, top_k, material, product)
     return docs, metas
 
 
@@ -370,9 +376,15 @@ def stream_tokens(question: str, docs, metas):
             yield delta
 
 
-def query(question: str, collection: str = CATALOG, top_k: int = 5, material: str | None = None) -> tuple:
+def query(
+    question: str,
+    collection: str = CATALOG,
+    top_k: int = 5,
+    material: str | None = None,
+    product: str | None = None,
+) -> tuple:
     """一次性返回（向后兼容旧前端）。"""
-    docs, metas = retrieve(question, collection, top_k, material)
+    docs, metas = retrieve(question, collection, top_k, material, product)
     if not docs:
         return "未检索到相关数据", []
     answer = "".join(stream_tokens(question, docs, metas))
@@ -404,10 +416,9 @@ def _split_source(value: str) -> tuple:
 
 
 def _resolve(name: str) -> str:
-    """旧前端可能传材质名或旧库名，统一落到产品库。"""
-    codes = {item["code"] for item in MATERIALS}
-    legacy = {"materials", "peek", "fkm"}
-    if not name or name == "all" or str(name).upper() in codes or str(name).lower() in legacy:
+    """旧集合名统一落到产品库；产品筛选走 product_id，不再拆库。"""
+    legacy = {"materials", "peek", "fkm", "catalog"}
+    if not name or name == "all" or str(name).lower() in legacy:
         return CATALOG
     return name
 

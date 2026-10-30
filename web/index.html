@@ -33,7 +33,7 @@
   <main class="main">
     <div class="view" id="chatView">
       <div class="collbar">
-        <nav class="collnav" id="nav"></nav>
+        <div class="collnav"><select id="productSelect" class="product-select" aria-label="选择产品"></select></div>
         <span class="coll-count" id="crumbCount"></span>
         <span class="coll-label" id="crumbLabel"></span>
       </div>
@@ -60,7 +60,7 @@
 
     <div class="view hidden" id="resourcesView">
       <div class="res-bar">
-        <div class="seg" id="resSeg"></div>
+        <select id="resSeg" class="product-select res-select" aria-label="按产品筛选"></select>
         <input id="resFilter" class="res-filter" placeholder="筛选文件名或牌号…" autocomplete="off">
         <div class="res-search">
           <input id="searchTest" placeholder="检索测试：看命中了哪几条">

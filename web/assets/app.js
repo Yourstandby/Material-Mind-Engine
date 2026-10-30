@@ -2,23 +2,11 @@
 
 const $ = (s) => document.querySelector(s);
 
-const EXAMPLES = {
-  materials: [
-    "FFKM 的耐温范围是多少？",
-    "300°C 老化 70 小时后的压缩永久变形是多少？",
-    "哪些供应商提供全氟醚橡胶？",
-  ],
-  fkm: [
-    "FKM 的低温极限是多少？",
-    "FKM 与 FFKM 的耐化学性差异？",
-    "氟含量如何影响耐油性？",
-  ],
-  peek: [
-    "PEEK 的长期使用温度？",
-    "PEEK 在等离子体环境下的表现？",
-    "PEEK 的压缩永久变形数据？",
-  ],
-};
+const EXAMPLES = [
+  "这个产品 300°C 老化 70 小时后的压缩永久变形是多少？",
+  "这个产品的耐温范围是多少？",
+  "这个产品在哪些介质里耐化学性最好？",
+];
 
 const state = { collections: [], active: "all", busy: false, controller: null };
 
@@ -172,32 +160,22 @@ function renderMD(md) {
 /* ───────── 侧栏 / 顶栏 ───────── */
 
 function renderNav() {
-  $("#nav").innerHTML = state.collections
+  const select = $("#productSelect");
+  if (!select) return;
+  select.innerHTML = state.collections
     .map(
-      (c) => `<button class="nav-item" data-name="${esc(c.name)}" type="button" title="${esc(c.full)}">
-        <span class="nav-name">${esc(c.label)}</span>
-        <span class="nav-count">${c.count || 0}</span>
-      </button>`
+      (c) =>
+        `<option value="${esc(c.name)}" title="${esc(c.full)}">${esc(c.label)} · ${c.count || 0} 条</option>`
     )
     .join("");
-  document.querySelectorAll(".nav-item").forEach((b) =>
-    b.addEventListener("click", () => setActive(b.dataset.name))
-  );
+  select.value = state.active;
+  select.onchange = () => setActive(select.value);
 }
 
-function renderChips() {
-  $("#chips").innerHTML = state.collections
-    .map(
-      (c) => `<button class="chip" data-name="${esc(c.name)}" type="button">${esc(c.label)}</button>`
-    )
-    .join("");
-  document.querySelectorAll(".chip").forEach((b) =>
-    b.addEventListener("click", () => setActive(b.dataset.name))
-  );
-}
+function renderChips() {}
 
 function renderExamples() {
-  const list = EXAMPLES[state.active] || EXAMPLES.materials;
+  const list = EXAMPLES;
   $("#examples").innerHTML = list
     .map(
       (q, idx) =>
@@ -216,18 +194,15 @@ function setActive(name) {
   state.active = name;
   localStorage.setItem("mme.collection", name);
   localStorage.setItem("mme.lastLabel", name);
-  document.querySelectorAll(".nav-item").forEach((b) =>
-    b.classList.toggle("active", b.dataset.name === name)
-  );
-  document.querySelectorAll(".chip").forEach((b) =>
-    b.classList.toggle("active", b.dataset.name === name)
-  );
+  const select = $("#productSelect");
+  if (select) select.value = name;
 
   const meta = state.collections.find((c) => c.name === name) || state.collections[0] || {};
   $("#crumbLabel").textContent = meta.label || name;
   $("#crumbCount").textContent = `${meta.count || 0} 条记录`;
   $("#statusText").textContent = meta.hint || "本地知识库";
-  $("#input").placeholder = `询问 ${meta.label || ""} 的牌号、耐温、压缩变形…`;
+  $("#input").placeholder =
+    name === "all" ? "提问…" : `询问 ${meta.label} 的耐温、压缩变形、耐化学性…`;
   renderExamples();
 }
 
@@ -381,7 +356,6 @@ function ingestOne(file) {
   const form = new FormData();
   form.append("file", file);
   form.append("collection", "catalog");
-  form.append("material", state.active);
 
   return fetch("/api/ingest", { method: "POST", body: form })
     .then(async (res) => {
@@ -543,7 +517,7 @@ async function ask(question) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, material: state.active }),
+      body: JSON.stringify({ question: q, collection: "catalog", product: state.active }),
       signal: state.controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -617,9 +591,9 @@ function paletteData(query) {
   const q = query.trim().toLowerCase();
   const items = [];
   state.collections.forEach((c) =>
-    items.push({ kind: "库", label: `${c.label} · ${c.full}`, action: () => setActive(c.name), text: `${c.label} ${c.full} ${c.name}` })
+    items.push({ kind: "产品", label: `${c.label} · ${c.full}`, action: () => setActive(c.name), text: `${c.label} ${c.full} ${c.name}` })
   );
-  (EXAMPLES[state.active] || []).forEach((ex) =>
+  EXAMPLES.forEach((ex) =>
     items.push({ kind: "问", label: ex, action: () => ask(ex), text: ex })
   );
   return q ? items.filter((it) => it.text.toLowerCase().includes(q)) : items;
@@ -785,11 +759,11 @@ async function boot() {
     const data = await res.json();
     state.collections = data.collections || [];
   } catch (e) {
-    state.collections = [{ name: "materials", label: "FFKM", full: "全氟醚橡胶", hint: "离线", count: 0 }];
+    state.collections = [{ name: "all", label: "全部产品", full: "离线", hint: "离线", count: 0 }];
   }
 
   if (!state.collections.length) {
-    state.collections = [{ name: "materials", label: "FFKM", full: "全氟醚橡胶", hint: "", count: 0 }];
+    state.collections = [{ name: "all", label: "全部产品", full: "", hint: "", count: 0 }];
   }
 
   const saved = localStorage.getItem("mme.collection");

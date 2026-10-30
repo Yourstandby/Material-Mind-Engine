@@ -10,11 +10,17 @@ TEXTUAL = {".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".log"}
 
 
 def _broken(text: str) -> bool:
-    """文本层缺字太多（日文字体没嵌 ToUnicode）：U+FFFD 达到 1% 或 5 处以上。"""
+    """文本层几乎不可读时才整页 OCR：缺字过半或篇幅极短还缺字。
+
+    轻微缺字（日文字体没嵌 ToUnicode）不要换 OCR —— OCR 会把表格打散成
+    一列一行的流水账，牌号就对不上数据了，反而更难抽取。
+    """
     if not text:
         return False
     bad = text.count("\ufffd")
-    return bad >= 5 and bad / max(len(text), 1) >= 0.01
+    if not bad:
+        return False
+    return bad / max(len(text), 1) >= 0.2 or (len(text) < 80 and bad >= 3)
 
 
 def decode(data: bytes) -> str:

@@ -21,11 +21,10 @@ from core.config import env, status as config_status
 from core.query_engine import (
     CATALOG,
     build_sources,
-    collection_stats,
     delete_source,
     doc_products,
-    material_stats,
     named_suppliers,
+    product_options,
     product_stats,
     records_of,
     resolve_collection,
@@ -57,12 +56,12 @@ app = FastAPI(title="Material Mind Engine", docs_url="/api/docs", redoc_url=None
 class Ask(BaseModel):
     question: str
     collection: str = "catalog"
-    material: str = "all"
+    product: str = "all"
     top_k: int = 5
 
 
 class ReparseIn(BaseModel):
-    collection: str = "materials"
+    collection: str = "catalog"
     source: str = ""
 
 
@@ -72,19 +71,18 @@ def sse(payload: dict) -> str:
 
 @app.get("/api/bootstrap")
 def bootstrap():
-    materials = material_stats()
+    products = product_options()
     return {
-        "collections": materials,
-        "materials": materials,
-        "products": product_stats(),
+        "collections": products,
+        "products": products,
         "catalog": CATALOG,
         "config": config_status(),
     }
 
 
 @app.get("/api/products")
-def api_products(material: str = "all"):
-    return {"items": product_stats(None if material == "all" else material)}
+def api_products():
+    return {"items": product_stats()}
 
 
 @app.get("/api/health")
@@ -128,7 +126,7 @@ async def ingest_file(
 
 
 @app.get("/api/records")
-def records(collection: str = "materials", limit: int = 30):
+def records(collection: str = "catalog", limit: int = 30):
     return {"items": sample_records(collection, limit)}
 
 
@@ -174,7 +172,7 @@ def chat(body: Ask, request: Request):
         top_score = None
         try:
             docs, metas, scores = retrieve_scored(
-                question, body.collection, body.top_k, material=body.material
+                question, body.collection, body.top_k, product=body.product
             )
             if not docs:
                 _capture_failure(question, "", [], None, username)
@@ -242,21 +240,21 @@ def api_sources(collection: str = "all"):
 
 
 @app.get("/api/sources/records")
-def api_source_records(collection: str = "materials", source: str = "", limit: int = 200):
+def api_source_records(collection: str = "catalog", source: str = "", limit: int = 200):
     if not source:
         raise HTTPException(status_code=400, detail="source 不能为空")
     return {"items": records_of(collection, source, limit)}
 
 
 @app.delete("/api/sources")
-def api_delete_source(collection: str = "materials", source: str = ""):
+def api_delete_source(collection: str = "catalog", source: str = ""):
     if not source:
         raise HTTPException(status_code=400, detail="source 不能为空")
     return {"deleted": delete_source(collection, source)}
 
 
 @app.get("/api/search")
-def api_search(q: str, collection: str = "materials", top_k: int = 8):
+def api_search(q: str, collection: str = "catalog", top_k: int = 8):
     return {"items": search_debug(q, collection, top_k)}
 
 
@@ -308,11 +306,11 @@ def _library_item(doc: dict, products: dict) -> dict:
 
 
 @app.get("/api/library")
-def api_library(collection: str = "all", material: str = "all"):
+def api_library(collection: str = "all", product: str = "all"):
     products = doc_products()
     items = [_library_item(doc, products) for doc in repo.all_docs()]
-    if material and material != "all":
-        items = [item for item in items if item.get("material") == material]
+    if product and product != "all":
+        items = [item for item in items if item.get("product_id") == product]
     if collection != "all":
         items = [item for item in items if item["collection"] == collection]
     return {"items": items}

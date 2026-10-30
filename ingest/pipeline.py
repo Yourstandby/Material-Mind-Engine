@@ -122,13 +122,21 @@ def _page_head(text: str) -> str:
     return " ".join(lines[:2])[:220]
 
 
+HEAD_HINTS = ("特性", "単位", "单位", "番号", "牌号", "型号", "該当", "グレード", "品名")
+
+
 def _head_at(page_text: str, piece: str) -> str:
     """取片段之前最近的一个表头；一页有多张表时不会拿错列名。"""
     index = page_text.find(piece[:30]) if piece else -1
     prefix = page_text[:index] if index > 0 else ""
-    lines = [line.strip() for line in prefix.splitlines() if "特性" in line or "单位" in line]
-    if lines:
-        return lines[-1][:220]
+    lines = prefix.splitlines()
+    hit = -1
+    for i, line in enumerate(lines):
+        if any(hint in line for hint in HEAD_HINTS):
+            hit = i
+    if hit >= 0:
+        # 表头常跨两三行（材料种类 / JIS 记号 / NOK 該当番号），一起带上
+        return " ".join(line.strip() for line in lines[max(hit - 2, 0) : hit + 1])[:320]
     return _page_head(page_text)
 
 

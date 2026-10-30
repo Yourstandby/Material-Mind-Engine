@@ -1,7 +1,7 @@
 /* 资料库：列表 / 筛选 / 批量 / 抽屉 / 检索测试 */
 
 const resState = {
-  collection: "all",
+  product: "all",
   sources: [],
   filter: "",
   selected: new Set(),
@@ -40,7 +40,7 @@ async function loadSources() {
   const meta = document.getElementById("resMeta");
   meta.textContent = "加载中…";
   try {
-    const res = await fetch(`/api/library?material=${encodeURIComponent(resState.collection)}`);
+    const res = await fetch(`/api/library?product=${encodeURIComponent(resState.product)}`);
     const data = await res.json();
     resState.sources = data.items || [];
     const alive = new Set(resState.sources.map(keyOf));
@@ -56,24 +56,15 @@ async function loadSources() {
 
 function renderSeg() {
   const seg = document.getElementById("resSeg");
-  const options = [{ name: "all", label: "全部" }].concat(
-    state.collections.map((c) => ({ name: c.name, label: c.label }))
-  );
-  seg.innerHTML = options
-    .map(
-      (o) =>
-        `<button type="button" data-name="${esc(o.name)}" class="${
-          o.name === resState.collection ? "active" : ""
-        }">${esc(o.label)}</button>`
-    )
+  if (!seg) return;
+  seg.innerHTML = state.collections
+    .map((c) => `<option value="${esc(c.name)}">${esc(c.label)} · ${c.count || 0} 条</option>`)
     .join("");
-  seg.querySelectorAll("button").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      resState.collection = btn.dataset.name;
-      renderSeg();
-      loadSources();
-    })
-  );
+  seg.value = resState.product;
+  seg.onchange = () => {
+    resState.product = seg.value;
+    loadSources();
+  };
 }
 
 function visibleSources() {
@@ -96,11 +87,6 @@ const TYPE_LABEL = { patent: "专利", paper: "论文", standard: "标准", data
 function typeBadge(type) {
   const key = TYPE_LABEL[type] ? type : "other";
   return `<span class="type t-${key}">${TYPE_LABEL[key]}</span>`;
-}
-
-function materialBadge(code) {
-  if (!code) return "";
-  return `<span class="type t-material">${esc(code)}</span>`;
 }
 
 function renderResList() {
@@ -147,7 +133,6 @@ function renderResList() {
             current = key;
             rows.push(`<div class="res-group">
               <span class="g-name">${esc(item.product_name || "未关联产品")}</span>
-              ${materialBadge(item.material)}
               <span class="g-meta">${esc(item.supplier || "")}${
               item.supplier ? " · " : ""
             }${counts.get(key)} 份文件</span>
@@ -512,22 +497,16 @@ async function runSearch() {
   panel.hidden = false;
   panel.innerHTML = `<div class="res-empty-sub" style="padding:6px 0">检索中…</div>`;
 
-  const collections =
-    resState.collection === "all" ? state.collections.map((c) => c.name) : [resState.collection];
+  const scope = resState.product === "all" ? "全部产品" : labelOf(resState.product);
 
   try {
-    const batches = await Promise.all(
-      collections.map(async (col) => {
-        const res = await fetch(
-          `/api/search?q=${encodeURIComponent(query)}&collection=${encodeURIComponent(col)}`
-        );
-        const data = await res.json();
-        return (data.items || []).map((hit) => ({ ...hit, collection: col }));
-      })
+    const res = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}&collection=catalog`
     );
-
-    const hits = batches
-      .flat()
+    const data = await res.json();
+    const hits = (data.items || [])
+      .filter((hit) => resState.product === "all" || hit.product_id === resState.product)
+      .map((hit) => ({ ...hit, collection: "catalog" }))
       .sort((a, b) => (b.score || 0) - (a.score || 0))
       .slice(0, 8);
 
@@ -537,9 +516,7 @@ async function runSearch() {
     }
 
     panel.innerHTML =
-      `<div class="hits-head">命中 ${hits.length} 条 · ${esc(
-        resState.collection === "all" ? "全部库" : labelOf(resState.collection)
-      )}</div>` +
+      `<div class="hits-head">命中 ${hits.length} 条 · ${esc(scope)}</div>` +
       hits
         .map(
           (hit) => `<div class="hit">
