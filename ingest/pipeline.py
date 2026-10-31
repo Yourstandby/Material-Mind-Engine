@@ -16,7 +16,7 @@ from core import applications
 from core import vector_store as vs
 from core.config import env
 from core.query_engine import FIELDS as FIELD_LABELS
-from ingest import metadata, repo
+from ingest import grades, metadata, repo
 from ingest.chunk import split
 from ingest.extract import extract_all
 from ingest.parse import parse
@@ -375,6 +375,18 @@ def ingest(
     doc_meta = metadata.extract(
         filename, data, doc["pages"], suppliers=[r.get("supplier") for r in keep]
     )
+
+    # 牌号兜底：LLM 容易把「品牌 + 型号」漏在表头/页眉里（BLAZER ™ S2、Tecnoflon P 959），
+    # 在缺牌号的记录上用原文回填；只在本文档稳定出现过的候选才算，论文/专利不补。
+    filled = grades.backfill(
+        keep,
+        {page["page"]: page["text"] for page in doc["pages"]},
+        filename,
+        str(doc_meta.get("doc_type") or ""),
+    )
+    if filled:
+        _log(f"  牌号兜底回填 {filled} 条")
+        yield {"type": "warn", "message": f"{filled} 条记录没抽到牌号，已按原文回填"}
 
     yield {"type": "stage", "stage": "embed", "records": len(keep)}
 
