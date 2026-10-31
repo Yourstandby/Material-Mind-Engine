@@ -1,0 +1,106 @@
+[
+ {
+  "file": "1739DC08F4B289E12FCEDC67A761480A.pdf",
+  "pages": 12,
+  "scan_pages": [],
+  "text_layer_pages": 12,
+  "final_empty_pages": [],
+  "chars": 49759,
+  "suspect_line_pages": 12,
+  "ocr_pages": 0,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ },
+ {
+  "file": "2009_patent_unknown_us000007576164b220090818.pdf",
+  "pages": 8,
+  "scan_pages": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8
+  ],
+  "text_layer_pages": 0,
+  "final_empty_pages": [],
+  "chars": 45153,
+  "suspect_line_pages": 8,
+  "ocr_pages": 2,
+  "table_pages": 1,
+  "low_conf_lines": 1,
+  "notes": []
+ },
+ {
+  "file": "41FF86C3A3B6883C04F36A83ADF65F59.pdf",
+  "pages": 5,
+  "scan_pages": [],
+  "text_layer_pages": 5,
+  "final_empty_pages": [],
+  "chars": 20546,
+  "suspect_line_pages": 5,
+  "ocr_pages": 0,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ },
+ {
+  "file": "78DDAD8A82B625086A63D17EA8F612B5.pdf",
+  "pages": 4,
+  "scan_pages": [],
+  "text_layer_pages": 4,
+  "final_empty_pages": [],
+  "chars": 15950,
+  "suspect_line_pages": 4,
+  "ocr_pages": 0,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ },
+ {
+  "file": "E10.pdf",
+  "pages": 20,
+  "scan_pages": [],
+  "text_layer_pages": 20,
+  "final_empty_pages": [],
+  "chars": 69448,
+  "suspect_line_pages": 18,
+  "ocr_pages": 0,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ },
+ {
+  "file": "ffkm.pdf",
+  "pages": 17,
+  "scan_pages": [],
+  "text_layer_pages": 17,
+  "final_empty_pages": [],
+  "chars": 88032,
+  "suspect_line_pages": 17,
+  "ocr_pages": 0,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ },
+ {
+  "file": "NOK Oring.pdf",
+  "pages": 103,
+  "scan_pages": [
+   59
+  ],
+  "text_layer_pages": 102,
+  "final_empty_pages": [
+   59
+  ],
+  "chars": 235853,
+  "suspect_line_pages": 103,
+  "ocr_pages": 1,
+  "table_pages": 0,
+  "low_conf_lines": 0,
+  "notes": []
+ }
+]
