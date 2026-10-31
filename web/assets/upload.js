@@ -1,6 +1,6 @@
 /* 投喂：后台入库任务 + 进度落盘，刷新后仍能看到队列 */
 
-const upState = { total: 0, done: 0, failed: 0, active: 0 };
+const upState = { total: 0, done: 0, failed: 0, active: 0, rows: new Map(), polling: new Set() };
 const UP_POLL_MS = 800;
 const UP_RESTORE_MS = 30 * 60 * 1000;
 
@@ -33,7 +33,18 @@ function showUploader(clear = true) {
   const panel = document.getElementById("uploader");
   if (!panel) return;
   panel.hidden = false;
-  if (clear) document.getElementById("upList").innerHTML = "";
+  if (clear) {
+    document.getElementById("upList").innerHTML = "";
+    upState.rows.clear();
+    upState.polling.clear();
+  }
+  if (!document.querySelector("#upList .up-row") && !document.getElementById("upEmpty")) {
+    const empty = document.createElement("div");
+    empty.id = "upEmpty";
+    empty.className = "up-empty";
+    empty.textContent = "暂无入库任务。选择文件后，这里会显示解析、抽取和向量化进度。";
+    document.getElementById("upList").appendChild(empty);
+  }
   updateSummary();
 }
 
@@ -49,6 +60,8 @@ function updateSummary() {
 }
 
 function addRow(name, size, collection) {
+  const empty = document.getElementById("upEmpty");
+  if (empty) empty.remove();
   const row = document.createElement("div");
   row.className = "up-row";
   row.innerHTML = `
@@ -221,8 +234,12 @@ async function ingestFile(file, row) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.job_id) throw new Error("服务端未返回任务编号");
+    row.jobId = data.job_id;
+    upState.rows.set(data.job_id, row);
+    upState.polling.add(data.job_id);
     setStage(row, "已提交", 8);
     await pollJob(row, data.job_id);
+    upState.polling.delete(data.job_id);
   } catch (err) {
     row.ok = false;
     row.finished = true;
@@ -234,40 +251,61 @@ async function ingestFile(file, row) {
 
 /* ───────── 刷新后恢复 ───────── */
 
-async function restoreJobs() {
+async function restoreJobs(force = false) {
   let items = [];
   try {
     const res = await fetch("/api/ingest/jobs?limit=8");
-    if (!res.ok) return;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     items = (await res.json()).items || [];
   } catch (err) {
+    showUploader(false);
+    const empty = document.getElementById("upEmpty");
+    if (empty) empty.textContent = `无法读取入库进度（${err.message}）。请确认已重启 Web 服务。`;
     return;
   }
   const recent = items.filter(
-    (job) => job.status === "running" || Date.now() / 1000 - (job.updated_at || 0) < UP_RESTORE_MS / 1000
+    (job) =>
+      job.status === "running" ||
+      force ||
+      Date.now() / 1000 - (job.updated_at || 0) < UP_RESTORE_MS / 1000
   );
-  if (!recent.length) return;
+  if (!recent.length) {
+    showUploader(false);
+    if (force) toast("暂无入库任务", "info");
+    return;
+  }
 
   showUploader(false);
-  const rows = recent.map((job) => {
-    const row = addRow(job.filename, 0, job.collection);
-    row.finished = job.status !== "running";
-    return { row, job };
+  const rows = [];
+  recent.forEach((job) => {
+    let row = upState.rows.get(job.id);
+    if (!row) {
+      row = addRow(job.filename, 0, job.collection);
+      row.jobId = job.id;
+      row.finished = job.status !== "running";
+      upState.rows.set(job.id, row);
+      rows.push({ row, job });
+    }
+    renderJob(row, job);
   });
 
-  rows.forEach(({ row, job }) => renderJob(row, job));
-
-  const running = rows.filter(({ job }) => job.status === "running");
-  if (!running.length) return;
+  const running = recent.filter((job) => job.status === "running" && !upState.polling.has(job.id));
+  if (!running.length) {
+    updateSummary();
+    return;
+  }
   const btn = document.getElementById("upBtn");
   if (btn) btn.classList.add("busy");
-  upState.total = rows.length;
-  upState.active = running.length;
+  upState.total = upState.rows.size;
+  upState.active = recent.filter((job) => job.status === "running").length;
   updateSummary();
 
   await Promise.all(
-    running.map(async ({ row, job }) => {
+    running.map(async (job) => {
+      const row = upState.rows.get(job.id);
+      upState.polling.add(job.id);
       await pollJob(row, job.id);
+      upState.polling.delete(job.id);
       upState.active = Math.max(0, upState.active - 1);
       if (row.ok) upState.done += 1;
       else upState.failed += 1;
@@ -275,8 +313,13 @@ async function restoreJobs() {
     })
   );
 
-  if (btn) btn.classList.remove("busy");
+  if (btn && !upState.polling.size) btn.classList.remove("busy");
   onJobSettled();
+}
+
+async function refreshQueue() {
+  showUploader(false);
+  await restoreJobs(true);
 }
 
 /* ───────── 绑定 ───────── */

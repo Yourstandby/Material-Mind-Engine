@@ -716,7 +716,11 @@ function bindEvents() {
     if (e.dataTransfer && e.dataTransfer.files.length) ingestFiles(e.dataTransfer.files);
   });
 
-  $("#upBtn").addEventListener("click", () => $("#fileInput").click());
+  $("#upBtn").addEventListener("click", () => {
+    // 先展开入库队列：刷新后也能从这里查看正在投喂的进度
+    if (typeof refreshQueue === "function") refreshQueue();
+    $("#fileInput").click();
+  });
   $("#fileInput").addEventListener("change", (e) => {
     if (e.target.files.length) ingestFiles(e.target.files);
     e.target.value = "";
