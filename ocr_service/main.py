@@ -16,16 +16,19 @@ from __future__ import annotations
 import base64
 import io
 import os
+import threading
 import time
 
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from starlette.concurrency import run_in_threadpool
 from PIL import Image, ImageOps
 
 MAX_BYTES = int(os.environ.get("OCR_MAX_MB", "20")) * 1024 * 1024
 
 app = FastAPI(title="MME OCR", docs_url="/api/docs", redoc_url=None)
 _ENGINE = None
+_OCR_LOCK = threading.Lock()
 _ENGINE_MODEL = ""
 
 
@@ -74,6 +77,11 @@ def _open(data: bytes) -> Image.Image:
         raise HTTPException(status_code=400, detail=f"无法读取图片: {exc}")
 
 
+def _run_locked(data: bytes):
+    with _OCR_LOCK:
+        return _run(_open(data))
+
+
 @app.get("/health")
 def health():
     return {
@@ -92,7 +100,7 @@ async def ocr(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="空文件")
     if len(data) > MAX_BYTES:
         raise HTTPException(status_code=413, detail=f"图片超过 {MAX_BYTES // 1024 // 1024} MB")
-    return _run(_open(data))
+    return await run_in_threadpool(_run_locked, data)
 
 
 @app.post("/ocr/base64")
@@ -106,4 +114,4 @@ async def ocr_base64(body: dict):
         raise HTTPException(status_code=400, detail=f"base64 解码失败: {exc}")
     if len(data) > MAX_BYTES:
         raise HTTPException(status_code=413, detail="图片过大")
-    return _run(_open(data))
+    return await run_in_threadpool(_run_locked, data)
