@@ -57,3 +57,13 @@ def test_product_title_ignores_stored_supplier_name():
     assert catalog.product_title("Chemours", "", "Chemours") == catalog.UNNAMED
     assert catalog.product_title("Solvay", "XPE", "") == "Solvay XPE"
     assert catalog.product_title("", "", "S-FFKM-1") == "S-FFKM-1"
+
+
+def test_identity_confidence_drops_without_grade():
+    """抓不到牌号 → 身份置信度必须低，不能让不知归属的数值冒充高置信证据。"""
+    from core import catalog
+
+    assert catalog.identity_confidence("Solvay", "Varox DBPH-50") == 1.0
+    assert catalog.identity_confidence("Solvay", "") == catalog.IDENTITY_SUPPLIER_ONLY
+    assert catalog.identity_confidence("", "") == catalog.IDENTITY_NONE
+    assert catalog.identity_confidence("Solvay", "", "Solvay") == catalog.IDENTITY_SUPPLIER_ONLY

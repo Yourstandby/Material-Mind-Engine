@@ -115,3 +115,19 @@ def product_title(supplier: str, grade: str = "", stored_name: str = "") -> str:
     if clean_sup and stored.lower() == clean_sup.lower():
         return UNNAMED
     return stored
+
+
+IDENTITY_SUPPLIER_ONLY = 0.35
+IDENTITY_NONE = 0.2
+
+
+def identity_confidence(supplier: str, grade: str = "", stored_name: str = "") -> float:
+    """产品身份可信度：有牌号 1.0；只有厂商 0.35；什么都没有 0.2。
+
+    抽不到产品名的记录也可能是真实数据，但它无法归属到任何具体产品，
+    对「XX 牌号耐温多少」这类问题没有证据价值，置信度必须如实反映这一点，
+    否则一条不知属于谁的耐温值会以 0.9 的置信度冒充证据。
+    """
+    if not is_unnamed(product_title(supplier, grade, stored_name)):
+        return 1.0
+    return IDENTITY_SUPPLIER_ONLY if clean_supplier(supplier) else IDENTITY_NONE

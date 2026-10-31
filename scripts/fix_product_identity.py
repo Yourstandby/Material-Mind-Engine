@@ -38,10 +38,28 @@ def main() -> None:
             meta.get("supplier") or "", meta.get("grade") or title
         )
         after = (product_id, title)
-        if after == before:
+
+        # 产品身份不明 → 置信度封顶，即便当初 LLM 自报了 0.9
+        identity = catalog.identity_confidence(
+            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+        )
+        raw = meta.get("llm_confidence")
+        if raw is None:
+            raw = meta.get("confidence")
+        try:
+            raw = float(raw)
+        except (TypeError, ValueError):
+            raw = 0.5
+        confidence = round(min(raw, identity), 3)
+
+        if after == before and meta.get("confidence") == confidence and meta.get(
+            "identity_confidence"
+        ) == identity:
             continue
         renamed[(before, after)] = renamed.get((before, after), 0) + 1
         meta["product_id"], meta["product_name"] = product_id, title
+        meta["llm_confidence"], meta["identity_confidence"] = raw, identity
+        meta["confidence"] = confidence
         changed_ids.append(rid)
         changed_metas.append(meta)
 

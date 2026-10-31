@@ -119,6 +119,16 @@ def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
     material = catalog.material_of(str(record.get("composition") or ""), grade, fallback=fallback)
     meta["product_id"] = catalog.product_key(supplier, grade)
     meta["product_name"] = catalog.product_name(supplier, grade)
+    # 抽不到牌号的记录无法归属到具体产品，置信度不能还留着 LLM 自报的高分：
+    # 只压不增，原始分留在 llm_confidence 里。
+    identity = catalog.identity_confidence(supplier, grade)
+    meta["identity_confidence"] = identity
+    try:
+        llm_conf = float(record.get("confidence") or 0.5)
+    except (TypeError, ValueError):
+        llm_conf = 0.5
+    meta["llm_confidence"] = round(llm_conf, 3)
+    meta["confidence"] = round(min(llm_conf, identity), 3)
     meta["material"] = material
     meta["material_label"] = catalog.material_label(material)
     # 应用是第一等维度：行业 / 部件 / 介质 / 认证（字符串，可直接入库）

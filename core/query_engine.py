@@ -105,9 +105,9 @@ PROMPT = """你是材料数据助手。检索结果已按「产品」组织，�
     不要出现假名；拿不准的日语词按上下文翻译成中文
 12. 问题里提到的品牌/厂商如果在检索结果里完全找不到，直接说「库中没有该品牌的资料」，
     不要用其他厂商的产品代替
-13. 上下文里标了「（未标注）」的条目不是产品，不要输出成证据行——用户看的是产品，
-    「未标注」刷屏比不回答更糟。只有当问题明确问「资料/论文/研究里怎么说」时，
-    才引用它并注明来源；否则宁可少列几行
+13. 上下文里标了「（未标注）」或带「没标明产品牌号」提示的条目不是产品，不要输出成证据行——
+    用户看的是产品，「未标注」刷屏比不回答更糟；这类条目置信度本来就低。
+    只有当问题明确问「资料/论文/研究里怎么说」时，才引用它并注明来源；否则宁可少列几行
 14. 完全相同的行只输出一次；同一产品 + 同一字段 + 同一测试条件的重复值合并成一行，
     不要同一行罗列 8 遍
 15. 「供应商」「行业」「部件」不是一回事：上下文里「行业与部件」那一行只能用于判断应用场景，
@@ -246,7 +246,13 @@ def _rerank_rows(question: str, rows: list):
     if _is_aggregate(question) and any(word in question for word in ENUM_WORDS):
         return sorted(rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), row[3]))
     return sorted(
-        rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), _unnamed(row[1] or {}), row[3])
+        rows,
+        key=lambda row: (
+            -_grade_bonus(question, row[1] or {}),
+            _unnamed(row[1] or {}),
+            -round(_confidence(row[1] or {}) * 10),
+            row[3],
+        ),
     )
 
 
@@ -256,6 +262,24 @@ def _unnamed(meta: dict) -> int:
         meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
     )
     return 1 if catalog.is_unnamed(title) else 0
+
+
+def _confidence(meta: dict) -> float:
+    """产品身份不明的记录，即使 LLM 自报高分也不能当强证据。"""
+    try:
+        value = float(meta.get("confidence") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    identity = meta.get("identity_confidence")
+    if identity is None:
+        identity = catalog.identity_confidence(
+            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+        )
+    try:
+        identity = float(identity)
+    except (TypeError, ValueError):
+        identity = 1.0
+    return min(value, identity)
 
 
 DOC_WORDS = ("论文", "文献", "资料", "研究", "报告", "原文", "出处")
@@ -397,6 +421,8 @@ def format_context(docs, metas) -> str:
         product = "（未标注）" if catalog.is_unnamed(title) else title
         material = meta.get("material_label") or meta.get("material") or ""
         head = [f"[{i}] 产品: {product}"]
+        if catalog.is_unnamed(title):
+            head.append("    注意: 这条没标明产品牌号，不属于任何具体产品，不能当某个产品的证据")
         if material:
             head.append(f"    材质: {material}")
         if meta.get("supplier"):
@@ -451,6 +477,7 @@ def build_sources(metas) -> list:
                 "certs": meta.get("certs") or "",
                 "supplier": meta.get("supplier") or "",
                 "confidence": meta.get("confidence"),
+                "identity_confidence": meta.get("identity_confidence"),
                 "doc_id": meta.get("doc_id") or "",
                 "page": page,
                 "source": url,
