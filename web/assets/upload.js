@@ -1,6 +1,10 @@
-/* 投喂：全局上传队列 + toast 通知（覆盖 app.js 中的 ingestFiles） */
+/* 投喂：后台入库任务 + 进度落盘，刷新后仍能看到队列 */
 
-const upState = { total: 0, done: 0, failed: 0 };
+const upState = { total: 0, done: 0, failed: 0, active: 0 };
+const UP_POLL_MS = 800;
+const UP_RESTORE_MS = 30 * 60 * 1000;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ───────── toast ───────── */
 
@@ -25,10 +29,11 @@ function toast(message, type = "info", ms = 4200) {
 
 /* ───────── 队列面板 ───────── */
 
-function showUploader() {
+function showUploader(clear = true) {
   const panel = document.getElementById("uploader");
+  if (!panel) return;
   panel.hidden = false;
-  document.getElementById("upList").innerHTML = "";
+  if (clear) document.getElementById("upList").innerHTML = "";
   updateSummary();
 }
 
@@ -36,24 +41,25 @@ function updateSummary() {
   const sum = document.getElementById("upSum");
   if (!sum) return;
   const parts = [];
+  if (upState.active) parts.push(`进行中 ${upState.active}`);
   if (upState.done) parts.push(`完成 ${upState.done}`);
   if (upState.failed) parts.push(`失败 ${upState.failed}`);
   if (!parts.length) parts.push(`共 ${upState.total} 份`);
   sum.textContent = parts.join(" · ");
 }
 
-function addRow(file) {
+function addRow(name, size, collection) {
   const row = document.createElement("div");
   row.className = "up-row";
   row.innerHTML = `
     <div class="up-row-head">
-      <span class="up-file">${esc(file.name)}</span>
+      <span class="up-file">${esc(name)}</span>
       <span class="up-arrow">→</span>
-      <span class="up-lib">${esc(state.active)}</span>
+      <span class="up-lib">${esc(collection || "catalog")}</span>
       <span class="up-stage">排队中</span>
     </div>
     <div class="up-track"><i style="width:2%"></i></div>
-    <div class="up-note">${(file.size / 1024).toFixed(0)} KB</div>`;
+    <div class="up-note">${size ? `${(size / 1024).toFixed(0)} KB` : "已提交"}</div>`;
   document.getElementById("upList").appendChild(row);
 
   return {
@@ -66,6 +72,7 @@ function addRow(file) {
     lastWarn: "",
     ok: false,
     finished: false,
+    jobId: "",
   };
 }
 
@@ -79,6 +86,91 @@ function note(row, text, cls = "") {
   row.note.className = `up-note ${cls}`;
 }
 
+/* ───────── 进度渲染（新任务与刷新恢复共用） ───────── */
+
+function renderJob(row, job) {
+  if (!job) return;
+  row.found = job.found || row.found;
+  row.warns = (job.warns || []).length;
+
+  if (job.status === "running") {
+    if (job.stage === "extract") {
+      if (job.total) {
+        const pct = 15 + Math.round((72 * (job.done || 0)) / Math.max(job.total, 1));
+        setStage(row, `抽取 ${job.done || 0}/${job.total}`, pct);
+      } else {
+        setStage(row, "抽取中", 15);
+      }
+    } else if (job.stage === "embed") {
+      setStage(row, "向量化", 92);
+    } else if (job.stage === "parse") {
+      setStage(row, "解析文档", 8);
+    } else {
+      setStage(row, "排队中", 4);
+    }
+    let text = row.found ? `已抽到 ${row.found} 条` : job.total ? `切分 ${job.total} 块` : "处理中…";
+    if (row.warns) text += ` · ${row.warns} 处警告`;
+    note(row, text, row.warns ? "warn" : "");
+    return;
+  }
+
+  row.finished = true;
+  if (job.status === "error") {
+    row.ok = false;
+    row.el.classList.add("bad");
+    setStage(row, "失败", 100);
+    note(row, job.error || "入库失败", "err");
+    return;
+  }
+
+  row.ok = (job.added || 0) > 0;
+  const extra = job.quarantined ? ` · 隔离 ${job.quarantined}` : "";
+  const base = `+${job.added || 0} 条 · 跳过 ${job.skipped || 0}${extra}`;
+  if (row.ok) {
+    row.el.classList.add("ok");
+    setStage(row, "完成", 100);
+    note(row, row.warns ? `${base} · ${row.warns} 处警告` : base, "ok");
+  } else {
+    row.el.classList.add("zero");
+    setStage(row, "无数据", 100);
+    note(row, job.message || base, "warn");
+  }
+}
+
+let settleTimer = null;
+function onJobSettled() {
+  if (settleTimer) clearTimeout(settleTimer);
+  settleTimer = setTimeout(async () => {
+    settleTimer = null;
+    if (typeof refreshCollections === "function") await refreshCollections();
+    const onResources = !document.getElementById("resourcesView").classList.contains("hidden");
+    if (onResources && typeof loadSources === "function") loadSources();
+  }, 300);
+}
+
+/* ───────── 轮询 ───────── */
+
+async function pollJob(row, jobId) {
+  row.jobId = jobId;
+  for (;;) {
+    let job = null;
+    try {
+      const res = await fetch(`/api/ingest/jobs/${encodeURIComponent(jobId)}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      job = await res.json();
+    } catch (err) {
+      row.el.classList.add("bad");
+      setStage(row, "失联", 100);
+      note(row, `无法获取进度：${err.message}`, "err");
+      row.finished = true;
+      return;
+    }
+    renderJob(row, job);
+    if (job.status !== "running") return job;
+    await sleep(UP_POLL_MS);
+  }
+}
+
 /* ───────── 入库 ───────── */
 
 async function ingestFiles(fileList) {
@@ -90,17 +182,22 @@ async function ingestFiles(fileList) {
   upState.failed = 0;
   showUploader();
 
+  const rows = files.map((file) => addRow(file.name, file.size, "catalog"));
   const btn = document.getElementById("upBtn");
-  if (btn) btn.classList.add("busy");
 
-  const rows = files.map(addRow);
   for (let i = 0; i < files.length; i += 1) {
-    await ingestFile(files[i], rows[i]);
+    const row = rows[i];
+    upState.active += 1;
+    if (btn) btn.classList.add("busy");
+    updateSummary();
+    await ingestFile(files[i], row);
+    upState.active = Math.max(0, upState.active - 1);
+    if (row.ok) upState.done += 1;
+    else upState.failed += 1;
     updateSummary();
   }
 
   if (btn) btn.classList.remove("busy");
-
   await refreshCollections();
   const onResources = !document.getElementById("resourcesView").classList.contains("hidden");
   if (onResources && typeof loadSources === "function") loadSources();
@@ -119,98 +216,67 @@ async function ingestFile(file, row) {
   form.append("collection", "catalog");
 
   setStage(row, "上传中", 6);
-
   try {
     const res = await fetch("/api/ingest", { method: "POST", body: form });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let at;
-      while ((at = buffer.indexOf("\n\n")) >= 0) {
-        const frame = buffer.slice(0, at).trim();
-        buffer = buffer.slice(at + 2);
-        if (!frame.startsWith("data:")) continue;
-        try {
-          onIngestEvent(JSON.parse(frame.slice(5).trim()), row);
-        } catch (e) {
-          /* 忽略不完整帧 */
-        }
-      }
-    }
-
-    row.finished ? null : setStage(row, "中断", 100);
-    row.ok ? upState.done++ : upState.failed++;
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.job_id) throw new Error("服务端未返回任务编号");
+    setStage(row, "已提交", 8);
+    await pollJob(row, data.job_id);
   } catch (err) {
-    upState.failed++;
     row.ok = false;
+    row.finished = true;
     row.el.classList.add("bad");
     setStage(row, "失败", 100);
     note(row, err.message, "err");
   }
 }
 
-function onIngestEvent(evt, row) {
-  if (evt.type === "stage") {
-    if (evt.stage === "parse") setStage(row, "解析文档", 8);
-    if (evt.stage === "extract") {
-      setStage(row, "抽取中", 15);
-      note(row, `切分 ${evt.chunks} 块`);
-    }
-    if (evt.stage === "embed") setStage(row, "向量化", 92);
+/* ───────── 刷新后恢复 ───────── */
+
+async function restoreJobs() {
+  let items = [];
+  try {
+    const res = await fetch("/api/ingest/jobs?limit=8");
+    if (!res.ok) return;
+    items = (await res.json()).items || [];
+  } catch (err) {
     return;
   }
+  const recent = items.filter(
+    (job) => job.status === "running" || Date.now() / 1000 - (job.updated_at || 0) < UP_RESTORE_MS / 1000
+  );
+  if (!recent.length) return;
 
-  if (evt.type === "progress") {
-    const pct = Math.max(evt.total, 1);
-    setStage(row, `抽取 ${evt.done}/${evt.total}`, 15 + Math.round((72 * evt.done) / pct));
-    if (row.found) note(row, `已抽到 ${row.found} 条`);
-    return;
-  }
+  showUploader(false);
+  const rows = recent.map((job) => {
+    const row = addRow(job.filename, 0, job.collection);
+    row.finished = job.status !== "running";
+    return { row, job };
+  });
 
-  if (evt.type === "record") {
-    row.found += 1;
-    note(row, `已抽到 ${row.found} 条`);
-    return;
-  }
+  rows.forEach(({ row, job }) => renderJob(row, job));
 
-  if (evt.type === "warn") {
-    row.warns += 1;
-    row.lastWarn = evt.message;
-    note(row, `${row.warns} 处警告 · ${evt.message}`, "warn");
-    return;
-  }
+  const running = rows.filter(({ job }) => job.status === "running");
+  if (!running.length) return;
+  const btn = document.getElementById("upBtn");
+  if (btn) btn.classList.add("busy");
+  upState.total = rows.length;
+  upState.active = running.length;
+  updateSummary();
 
-  if (evt.type === "error") {
-    row.ok = false;
-    row.finished = true;
-    row.el.classList.add("bad");
-    setStage(row, "失败", 100);
-    note(row, evt.message, "err");
-    return;
-  }
+  await Promise.all(
+    running.map(async ({ row, job }) => {
+      await pollJob(row, job.id);
+      upState.active = Math.max(0, upState.active - 1);
+      if (row.ok) upState.done += 1;
+      else upState.failed += 1;
+      updateSummary();
+    })
+  );
 
-  if (evt.type === "done") {
-    row.ok = evt.added > 0;
-    row.finished = true;
-    setStage(row, row.ok ? "完成" : "无数据", 100);
-    const extra = evt.quarantined ? ` · 隔离 ${evt.quarantined}` : "";
-    const base = `+${evt.added} 条 · 跳过 ${evt.skipped}${extra}`;
-
-    if (row.ok) {
-      row.el.classList.add("ok");
-      note(row, row.warns ? `${base} · ${row.warns} 处警告` : base, "ok");
-    } else {
-      row.el.classList.add("zero");
-      note(row, evt.message || base, "warn");
-    }
-  }
+  if (btn) btn.classList.remove("busy");
+  onJobSettled();
 }
 
 /* ───────── 绑定 ───────── */
@@ -218,4 +284,5 @@ function onIngestEvent(evt, row) {
 (function initUploader() {
   const close = document.getElementById("upClose");
   if (close) close.addEventListener("click", () => (document.getElementById("uploader").hidden = true));
+  restoreJobs();
 })();

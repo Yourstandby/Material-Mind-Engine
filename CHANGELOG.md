@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 投喂进度可恢复：入库改为后台线程 + 落盘任务（`logs/ingest_jobs/`），刷新/重开页面会自动恢复运行中的队列并继续显示进度；`GET /api/ingest/jobs` 可查最近任务
 - 应用维度（以「用在哪」为主）：行业 / 部件 / 介质 / 认证 四类标签，随抽取自动归一化并写入向量元数据；问答与资料库可按应用筛选，英语资料通过查询扩展命中
 - `core/applications.py`：应用分类法、别名匹配、元数据打包与分布统计；新增 `GET /api/applications`
 - `scripts/backfill_applications.py`：存量数据回填应用字段，`--reembed` 可同步重算向量

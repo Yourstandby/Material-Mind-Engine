@@ -39,6 +39,7 @@ from core.query_engine import (
 )
 from ingest import repo
 from ingest.pipeline import ingest as run_ingest
+from server import jobs
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -123,18 +124,23 @@ async def ingest_file(
     except OSError:
         pass
 
-    def gen():
-        try:
-            for event in run_ingest(filename, data, collection, material):
-                yield sse(event)
-        except Exception as exc:
-            yield sse({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+    # 后台线程跑抽取，HTTP 立即返回任务号；刷新页面后按任务号恢复进度
+    job = jobs.start(filename, data, collection, run_ingest)
+    return {"job_id": job["id"], "filename": filename, "collection": collection}
 
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+
+@app.get("/api/ingest/jobs")
+def api_ingest_jobs(limit: int = 10):
+    """最近的入库任务（含运行中）：刷新页面后据此恢复进度。"""
+    return {"items": jobs.recent(limit)}
+
+
+@app.get("/api/ingest/jobs/{job_id}")
+def api_ingest_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
 
 
 @app.get("/api/records")
