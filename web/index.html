@@ -62,6 +62,10 @@
       <div class="res-bar">
         <select id="resSeg" class="product-select res-select" aria-label="按产品筛选"></select>
         <select id="resApp" class="product-select res-select" aria-label="按应用筛选"></select>
+        <select id="resFolder" class="product-select res-select folder-select" aria-label="按文件夹筛选"></select>
+        <button id="folderNew" class="folder-btn" type="button">+ 文件夹</button>
+        <button id="folderRename" class="folder-btn" type="button">重命名</button>
+        <button id="folderDelete" class="folder-btn" type="button">删除</button>
         <input id="resFilter" class="res-filter" placeholder="筛选文件名或牌号…" autocomplete="off">
         <div class="res-search">
           <input id="searchTest" placeholder="检索测试：看命中了哪几条">
@@ -103,6 +107,7 @@
 <div class="uploader" id="uploader" hidden>
   <div class="uploader-head">
     <span class="uploader-title">入库队列</span>
+    <select id="upFolder" class="up-folder" aria-label="目标文件夹"></select>
     <span class="uploader-sum" id="upSum"></span>
     <button class="uploader-close" id="upClose" type="button" aria-label="收起"><span class="ico" data-icon="x"></span></button>
   </div>

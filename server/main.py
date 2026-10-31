@@ -71,6 +71,10 @@ class ReparseIn(BaseModel):
     source: str = ""
 
 
+class FolderIn(BaseModel):
+    name: str
+
+
 def sse(payload: dict) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
@@ -82,6 +86,7 @@ def bootstrap():
         "collections": products,
         "products": products,
         "applications": application_facets(),
+        "folders": repo.folders(),
         "catalog": CATALOG,
         "config": config_status(),
     }
@@ -108,6 +113,7 @@ async def ingest_file(
     file: UploadFile = File(...),
     collection: str = Form("catalog"),
     material: str = Form(""),
+    folder: str = Form(""),
 ):
     data = await file.read()
     filename = file.filename or "upload"
@@ -125,7 +131,7 @@ async def ingest_file(
         pass
 
     # 后台线程跑抽取，HTTP 立即返回任务号；刷新页面后按任务号恢复进度
-    job = jobs.start(filename, data, collection, run_ingest)
+    job = jobs.start(filename, data, collection, run_ingest, material, folder)
     return {"job_id": job["id"], "filename": filename, "collection": collection}
 
 
@@ -141,6 +147,39 @@ def api_ingest_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
     return job
+
+
+@app.get("/api/folders")
+def api_folders():
+    return {"items": repo.folders()}
+
+
+@app.post("/api/folders")
+def api_folder_create(body: FolderIn):
+    try:
+        return repo.create_folder(body.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/folders/{fid}")
+def api_folder_rename(fid: str, body: FolderIn):
+    try:
+        return repo.rename_folder(fid, body.name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/folders/{fid}")
+def api_folder_delete(fid: str):
+    try:
+        return repo.delete_folder(fid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/records")
@@ -307,6 +346,7 @@ def api_reparse(body: ReparseIn):
 
 
 class DocPatch(BaseModel):
+    folder_id: str | None = None
     title: str | None = None
     authors: str | None = None
     year: int | None = None
@@ -318,12 +358,16 @@ class DocPatch(BaseModel):
     notes: str | None = None
 
 
-def _library_item(doc: dict, products: dict) -> dict:
+def _library_item(doc: dict, products: dict, folder_names: dict | None = None) -> dict:
     path = Path(doc.get("path") or "")
     name = path.name or doc.get("canonical_name") or doc.get("original_name") or ""
+    folder_id = doc.get("folder_id") or "unfiled"
+    names = folder_names if folder_names is not None else repo.folder_map()
     return {
         **doc,
         **(products.get(doc.get("doc_id"), {})),
+        "folder_id": folder_id,
+        "folder_name": names.get(folder_id, "未分类"),
         "source": name,
         "kind": (Path(name).suffix.lstrip(".") or "file").lower(),
     }
@@ -333,16 +377,20 @@ def _library_item(doc: dict, products: dict) -> dict:
 def api_library(
     collection: str = "all",
     product: str = "all",
+    folder: str = "all",
     industry: str = "",
     part: str = "",
     medium: str = "",
 ):
     products = doc_products()
-    items = [_library_item(doc, products) for doc in repo.all_docs()]
+    folder_names = repo.folder_map()
+    items = [_library_item(doc, products, folder_names) for doc in repo.all_docs()]
     if product and product != "all":
         items = [item for item in items if item.get("product_id") == product]
     if collection != "all":
         items = [item for item in items if item["collection"] == collection]
+    if folder and folder != "all":
+        items = [item for item in items if item.get("folder_id") == folder]
     if any(x and x != "all" for x in (industry, part, medium)):
         items = [item for item in items if applications.matches(item, industry, part, medium)]
     return {"items": items}
@@ -351,9 +399,15 @@ def api_library(
 @app.patch("/api/library/{doc_id}")
 def api_doc_update(doc_id: str, body: DocPatch):
     fields = {key: value for key, value in body.model_dump().items() if value is not None}
+    folder_id = fields.pop("folder_id", None)
     doc = repo.update(doc_id, fields)
     if not doc:
         raise HTTPException(status_code=404, detail="资料不存在")
+    if folder_id:
+        try:
+            doc = repo.move_doc(doc_id, folder_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     return _library_item(doc)
 
 

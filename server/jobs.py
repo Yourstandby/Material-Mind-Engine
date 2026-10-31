@@ -117,15 +117,15 @@ def recent(limit: int = 10) -> list[dict]:
     return items
 
 
-def start(filename: str, data: bytes, collection: str, runner) -> dict:
-    """创建任务并在后台线程跑 runner(filename, data, collection)。"""
+def start(filename: str, data: bytes, collection: str, runner, *extra) -> dict:
+    """创建任务并在后台线程跑 runner(filename, data, collection, *extra)。"""
     job = create(filename, collection)
     job_id = job["id"]
 
     def worker() -> None:
         try:
             finished = False
-            for event in runner(filename, data, collection):
+            for event in runner(filename, data, collection, *extra):
                 kind = event.get("type")
                 if kind == "stage":
                     update(job_id, stage=event.get("stage") or "", chunks=event.get("chunks") or 0)

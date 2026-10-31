@@ -20,6 +20,15 @@ from core.config import env
 ROOT = Path("library")
 INDEX = ROOT / "index.json"
 
+# 入库归属：用户可增删的文件夹。未分类是兜底目录，不可删除。
+UNFILED = "unfiled"
+DEFAULT_FOLDERS = (
+    (UNFILED, "未分类"),
+    ("fkm", "氟橡胶"),
+    ("ffkm", "全氟醚橡胶"),
+    ("peek", "聚醚醚酮"),
+)
+
 EDITABLE = (
     "title",
     "authors",
@@ -40,12 +49,27 @@ def _now() -> str:
 
 def _read() -> dict:
     if not INDEX.exists():
-        return {"version": 1, "docs": {}}
-    try:
-        data = json.loads(INDEX.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"version": 1, "docs": {}}
+        data = {"version": 1, "docs": {}}
+    else:
+        try:
+            data = json.loads(INDEX.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {"version": 1, "docs": {}}
     data.setdefault("docs", {})
+    changed = False
+    if "folders" not in data:
+        for fid, name in DEFAULT_FOLDERS:
+            data["folders"] = data.get("folders") or {}
+            data["folders"][fid] = {"id": fid, "name": name, "created_at": _now()}
+        changed = True
+    else:
+        data["folders"] = data.get("folders") or {}
+    # 未分类是兜底目录，始终存在
+    if UNFILED not in data["folders"]:
+        data["folders"][UNFILED] = {"id": UNFILED, "name": "未分类", "created_at": _now()}
+        changed = True
+    if changed:
+        _write(data)
     return data
 
 
@@ -84,6 +108,7 @@ def register(
     records: int = 0,
     meta: dict | None = None,
     path: str | None = None,
+    folder_id: str = "",
 ) -> dict:
     store = _read()
     did = doc_id(data)
@@ -96,6 +121,7 @@ def register(
         "pages": pages or previous.get("pages", 0),
         "chars": chars or previous.get("chars", 0),
         "records": records,
+        "folder_id": folder_id or previous.get("folder_id") or UNFILED,
         "ingested_at": previous.get("ingested_at") or _now(),
         "updated_at": _now(),
         **(meta or {}),
@@ -120,6 +146,113 @@ def get(did: str) -> dict | None:
 def all_docs() -> list[dict]:
     docs = list(_read()["docs"].values())
     return sorted(docs, key=lambda d: (-(d.get("year") or 0), d.get("title") or ""))
+
+
+def folders() -> list[dict]:
+    """文件夹及资料数。未分类排最后。"""
+    data = _read()
+    counts: dict = {}
+    for doc in data["docs"].values():
+        fid = doc.get("folder_id") or UNFILED
+        counts[fid] = counts.get(fid, 0) + 1
+    items = [
+        {**folder, "count": counts.get(fid, 0), "deletable": fid != UNFILED}
+        for fid, folder in data["folders"].items()
+    ]
+    items.sort(key=lambda item: (item["id"] == UNFILED, item["name"]))
+    return items
+
+
+def folder_map() -> dict:
+    return {item["id"]: item["name"] for item in folders()}
+
+
+def ensure_folder(name: str, folder_id: str = "") -> str:
+    """按名称找文件夹，没有就建；用于入库自动分类。"""
+    data = _read()
+    name = (name or "").strip() or "未分类"
+    for fid, folder in data["folders"].items():
+        if folder.get("name") == name:
+            return fid
+        if folder_id and fid == folder_id:
+            return fid
+    fid = folder_id or re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or doc_id(name.encode())
+    base, index = fid, 2
+    while fid in data["folders"]:
+        fid = f"{base}-{index}"
+        index += 1
+    data["folders"][fid] = {"id": fid, "name": name, "created_at": _now()}
+    _write(data)
+    return fid
+
+
+def create_folder(name: str) -> dict:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("文件夹名称不能为空")
+    if len(name) > 40:
+        raise ValueError("文件夹名称过长")
+    data = _read()
+    if any(folder.get("name") == name for folder in data["folders"].values()):
+        raise ValueError("同名文件夹已存在")
+    fid = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or doc_id(name.encode())
+    base, index = fid, 2
+    while fid in data["folders"]:
+        fid = f"{base}-{index}"
+        index += 1
+    folder = {"id": fid, "name": name, "created_at": _now()}
+    data["folders"][fid] = folder
+    _write(data)
+    return {**folder, "count": 0, "deletable": True}
+
+
+def rename_folder(fid: str, name: str) -> dict:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("文件夹名称不能为空")
+    data = _read()
+    folder = data["folders"].get(fid)
+    if not folder:
+        raise KeyError("文件夹不存在")
+    if fid == UNFILED:
+        raise ValueError("未分类不能重命名")
+    if any(item.get("name") == name and item_id != fid for item_id, item in data["folders"].items()):
+        raise ValueError("同名文件夹已存在")
+    folder["name"] = name
+    _write(data)
+    return folder
+
+
+def delete_folder(fid: str) -> dict:
+    """删除文件夹，资料移到未分类，不删文件。"""
+    if fid == UNFILED:
+        raise ValueError("未分类不能删除")
+    data = _read()
+    if fid not in data["folders"]:
+        raise KeyError("文件夹不存在")
+    moved = 0
+    for doc in data["docs"].values():
+        if (doc.get("folder_id") or UNFILED) == fid:
+            doc["folder_id"] = UNFILED
+            doc["updated_at"] = _now()
+            moved += 1
+    name = data["folders"][fid].get("name") or fid
+    del data["folders"][fid]
+    _write(data)
+    return {"deleted": name, "moved": moved}
+
+
+def move_doc(did: str, folder_id: str) -> dict | None:
+    data = _read()
+    doc = data["docs"].get(did)
+    if not doc:
+        return None
+    if folder_id not in data["folders"]:
+        raise ValueError("文件夹不存在")
+    doc["folder_id"] = folder_id
+    doc["updated_at"] = _now()
+    _write(data)
+    return doc
 
 
 def update(did: str, fields: dict) -> dict | None:

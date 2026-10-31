@@ -3,6 +3,8 @@
 const resState = {
   product: "all",
   industry: "all",
+  folder: "all",
+  folders: [],
   facets: null,
   sources: [],
   filter: "",
@@ -45,6 +47,7 @@ async function loadSources() {
   try {
     const params = new URLSearchParams({ product: resState.product });
     if (resState.industry && resState.industry !== "all") params.set("industry", resState.industry);
+    if (resState.folder && resState.folder !== "all") params.set("folder", resState.folder);
     const res = await fetch(`/api/library?${params.toString()}`);
     const data = await res.json();
     resState.sources = data.items || [];
@@ -99,6 +102,118 @@ function renderResApp() {
     resState.industry = sel.value;
     loadSources();
   };
+}
+
+async function loadFolders(force = false) {
+  if (!force && resState.folders.length) {
+    renderFolderSelects();
+    return resState.folders;
+  }
+  try {
+    const res = await fetch("/api/folders");
+    const data = await res.json();
+    resState.folders = data.items || [];
+  } catch (err) {
+    resState.folders = [];
+  }
+  renderFolderSelects();
+  return resState.folders;
+}
+
+function renderFolderSelects() {
+  const list = resState.folders;
+  const resSel = document.getElementById("resFolder");
+  if (resSel) {
+    const prev = resState.folder;
+    resSel.innerHTML =
+      `<option value="all">全部文件夹</option>` +
+      list
+        .map((f) => `<option value="${esc(f.id)}">${esc(f.name)} · ${f.count || 0}</option>`)
+        .join("");
+    resSel.value = list.some((f) => f.id === prev) ? prev : "all";
+    resState.folder = resSel.value;
+    resSel.onchange = () => {
+      resState.folder = resSel.value;
+      loadSources();
+    };
+  }
+  const upSel = document.getElementById("upFolder");
+  if (upSel) {
+    const prev = upSel.value || "auto";
+    upSel.innerHTML =
+      `<option value="auto">自动分类（按材质）</option>` +
+      list
+        .map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`)
+        .join("");
+    upSel.value = [...upSel.options].some((o) => o.value === prev) ? prev : "auto";
+  }
+  const rename = document.getElementById("folderRename");
+  const del = document.getElementById("folderDelete");
+  const current = list.find((f) => f.id === resState.folder);
+  const editable = !!current && current.deletable;
+  if (rename) rename.disabled = !editable;
+  if (del) del.disabled = !editable;
+}
+
+async function reloadFolders() {
+  await loadFolders(true);
+  return resState.folders;
+}
+
+async function createFolder() {
+  const name = window.prompt("新文件夹名称（例如：半导体、汽车、未分类2）");
+  if (!name || !name.trim()) return;
+  try {
+    const res = await fetch("/api/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "新建失败");
+    await reloadFolders();
+    resState.folder = data.id;
+    renderFolderSelects();
+    await loadSources();
+  } catch (err) {
+    window.alert(err.message);
+  }
+}
+
+async function renameFolder() {
+  const current = resState.folders.find((f) => f.id === resState.folder);
+  if (!current || !current.deletable) return;
+  const name = window.prompt("重命名文件夹", current.name);
+  if (!name || !name.trim() || name.trim() === current.name) return;
+  try {
+    const res = await fetch(`/api/folders/${encodeURIComponent(current.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "重命名失败");
+    await reloadFolders();
+    await loadSources();
+  } catch (err) {
+    window.alert(err.message);
+  }
+}
+
+async function deleteFolder() {
+  const current = resState.folders.find((f) => f.id === resState.folder);
+  if (!current || !current.deletable) return;
+  if (!window.confirm(`删除文件夹「${current.name}」？里面的 ${current.count || 0} 份资料会移到「未分类」，不会删除文件。`)) return;
+  try {
+    const res = await fetch(`/api/folders/${encodeURIComponent(current.id)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "删除失败");
+    resState.folder = "all";
+    await reloadFolders();
+    await loadSources();
+  } catch (err) {
+    window.alert(err.message);
+  }
 }
 
 function visibleSources() {
@@ -176,7 +291,7 @@ function renderResList() {
           }
           const index = list.indexOf(item);
           const on = resState.selected.has(keyOf(item));
-          const sub = [item.authors || item.publisher, item.patent_no || item.doi]
+          const sub = [item.folder_name, item.authors || item.publisher, item.patent_no || item.doi]
             .filter(Boolean)
             .join(" · ");
           rows.push(`<div class="res-row" data-i="${index}">
@@ -267,6 +382,14 @@ function metaForm(item) {
       )}"></label>
     </div>
     <div class="mrow">
+      <label class="mfield"><span>文件夹</span><select id="mFolder">${resState.folders
+        .map(
+          (f) =>
+            `<option value="${esc(f.id)}"${(item.folder_id || "unfiled") === f.id ? " selected" : ""}>${esc(
+              f.name
+            )}</option>`
+        )
+        .join("")}</select></label>
       <label class="mfield"><span>DOI</span><input id="mDoi" value="${esc(item.doi || "")}"></label>
       <label class="mfield"><span>专利号</span><input id="mPatent" value="${esc(
         item.patent_no || ""
@@ -302,6 +425,7 @@ async function saveMeta(item) {
   const value = (id) => (document.getElementById(id) || {}).value || "";
   const year = Number(value("mYear"));
   const payload = {
+    folder_id: value("mFolder"),
     title: value("mTitle").trim(),
     authors: value("mAuthors").trim(),
     year: Number.isFinite(year) && year > 0 ? year : null,
@@ -333,6 +457,7 @@ async function saveMeta(item) {
       data.collection
     )} · ${data.source}`;
     btn.textContent = "已保存";
+    await reloadFolders();
     await loadSources();
   } catch (err) {
     btn.textContent = `失败：${err.message}`;
@@ -609,6 +734,11 @@ async function runSearch() {
 
   document.getElementById("bulkDelete").addEventListener("click", bulkDelete);
   document.getElementById("bulkExport").addEventListener("click", bulkExport);
+
+  document.getElementById("folderNew").addEventListener("click", createFolder);
+  document.getElementById("folderRename").addEventListener("click", renameFolder);
+  document.getElementById("folderDelete").addEventListener("click", deleteFolder);
+  loadFolders();
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !document.getElementById("drawer").hidden) closeDrawer();

@@ -193,6 +193,7 @@ async function ingestFiles(fileList) {
   upState.total = files.length;
   upState.done = 0;
   upState.failed = 0;
+  if (typeof loadFolders === "function") await loadFolders();
   showUploader();
 
   const rows = files.map((file) => addRow(file.name, file.size, "catalog"));
@@ -227,6 +228,10 @@ async function ingestFile(file, row) {
   form.append("file", file);
   // 产品是检索主单位，材质只由入库流程从文档内容识别，前端不再传分类。
   form.append("collection", "catalog");
+  // 文件夹：auto/空 = 按主材质自动归类
+  const folderSel = document.getElementById("upFolder");
+  const folder = folderSel && folderSel.value !== "auto" ? folderSel.value : "";
+  form.append("folder", folder);
 
   setStage(row, "上传中", 6);
   try {
@@ -319,6 +324,7 @@ async function restoreJobs(force = false) {
 
 async function refreshQueue() {
   showUploader(false);
+  if (typeof loadFolders === "function") await loadFolders();
   await restoreJobs(true);
 }
 

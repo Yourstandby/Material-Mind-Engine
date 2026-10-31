@@ -164,7 +164,31 @@ def _client():
     return vs.client()
 
 
-def ingest(filename: str, data: bytes, collection: str = "catalog", material_hint: str = ""):
+def auto_folder(records: list[dict], material_hint: str = "") -> str:
+    """按记录里的主材质归入文件夹；判断不出进未分类。"""
+    counts: dict = {}
+    for record in records:
+        code = catalog.material_of(
+            str(record.get("composition") or ""),
+            str(record.get("grade") or record.get("grade_raw") or ""),
+            fallback=str(record.get("material") or material_hint or ""),
+        )
+        counts[code] = counts.get(code, 0) + 1
+    if not counts:
+        return repo.UNFILED
+    code = max(counts.items(), key=lambda item: item[1])[0]
+    if code == "OTHER":
+        return repo.UNFILED
+    return repo.ensure_folder(catalog.material_label(code), code.lower())
+
+
+def ingest(
+    filename: str,
+    data: bytes,
+    collection: str = "catalog",
+    material_hint: str = "",
+    folder_id: str = "",
+):
     """生成器：逐条抛出进度事件。"""
     if not embeddings.ready():
         yield {"type": "error", "message": "未配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL，无法入库"}
@@ -317,6 +341,11 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
             store.modify(metadata={"embedding_model": model})
         except Exception:
             pass
+    # 归属文件夹：投喂时指定优先，否则按资料的主材质自动归入
+    target_folder = folder_id if folder_id in repo.folder_map() else ""
+    if not target_folder:
+        target_folder = auto_folder(keep, material_hint)
+
     try:
         entry = repo.register(
             data=data,
@@ -327,6 +356,7 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
             records=len(keep),
             meta=doc_meta,
             path=_locate(collection, filename),
+            folder_id=target_folder,
         )
     except Exception as exc:  # 登记失败不应影响入库
         _log(f"  文献登记失败: {exc}")

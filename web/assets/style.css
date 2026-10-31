@@ -140,6 +140,18 @@ kbd {
 }
 .product-select:hover, .product-select:focus { border-bottom-color: var(--accent); }
 .res-select { max-width: 260px; }
+.folder-select { max-width: 170px; }
+.folder-btn {
+  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
+  padding: 4px 5px; border-radius: 3px; white-space: nowrap;
+}
+.folder-btn:hover { color: var(--ink); background: var(--surface-2); }
+.up-folder {
+  margin-left: auto; max-width: 130px; border: 0; border-bottom: 1px solid var(--rule);
+  background: transparent; color: var(--muted); font-family: var(--mono);
+  font-size: 10px; padding: 2px 0; outline: 0;
+}
 .app-select { max-width: 190px; }
 .coll-count {
   margin-left: auto; font-family: var(--mono); font-size: 10px;
