@@ -67,3 +67,15 @@ def test_identity_confidence_drops_without_grade():
     assert catalog.identity_confidence("Solvay", "") == catalog.IDENTITY_SUPPLIER_ONLY
     assert catalog.identity_confidence("", "") == catalog.IDENTITY_NONE
     assert catalog.identity_confidence("Solvay", "", "Solvay") == catalog.IDENTITY_SUPPLIER_ONLY
+
+
+def test_literature_is_not_unnamed_product():
+    """论文/专利没有牌号是正常的，归为文献，不当解析失败，也不冒充产品。"""
+    from core import catalog
+
+    assert catalog.product_title("", "", "", "paper") == catalog.LITERATURE
+    assert catalog.product_title("Solvay", "", "Solvay", "patent") == catalog.LITERATURE
+    assert catalog.identity_confidence("", "", "", "paper") == catalog.IDENTITY_LITERATURE
+    # 有牌号时文献身份让位于真实产品
+    assert catalog.product_title("", "S-FFKM-1", "", "paper") == "S-FFKM-1"
+    assert catalog.identity_confidence("", "S-FFKM-1", "", "paper") == 1.0

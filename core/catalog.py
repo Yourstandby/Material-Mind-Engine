@@ -76,6 +76,12 @@ def clean_grade(grade: str) -> str:
 
 
 UNNAMED = "未标注产品"
+LITERATURE = "（文献）"
+LITERATURE_TYPES = ("paper", "patent", "report", "standard", "manual")
+
+
+def is_literature(doc_type: str) -> bool:
+    return str(doc_type or "").strip() in LITERATURE_TYPES
 
 
 def is_unnamed(name: str) -> bool:
@@ -99,35 +105,42 @@ def product_name(supplier: str, grade: str) -> str:
     return name or UNNAMED
 
 
-def product_title(supplier: str, grade: str = "", stored_name: str = "") -> str:
+def product_title(supplier: str, grade: str = "", stored_name: str = "", doc_type: str = "") -> str:
     """展示用的产品名，兼容尚未回填的老数据。
 
     老数据里 product_name 可能等于供应商名（grade 缺失时的旧兜底），
     这种一律当「未标注产品」，供应商不是产品。
+    论文/专利/报告类根本没有牌号，「未标注产品」会让人以为是抽漏了，
+    单独标成「（文献）」。
     """
     clean_grd = clean_grade(grade)
     if clean_grd:
         return product_name(supplier, clean_grd)
     stored = clean_grade(stored_name)
-    if is_unnamed(stored):
-        return UNNAMED
-    clean_sup = clean_supplier(supplier)
-    if clean_sup and stored.lower() == clean_sup.lower():
-        return UNNAMED
-    return stored
+    if not is_unnamed(stored):
+        clean_sup = clean_supplier(supplier)
+        if not (clean_sup and stored.lower() == clean_sup.lower()):
+            return stored
+    return LITERATURE if is_literature(doc_type) else UNNAMED
 
 
 IDENTITY_SUPPLIER_ONLY = 0.35
 IDENTITY_NONE = 0.2
+IDENTITY_LITERATURE = 0.6
 
 
-def identity_confidence(supplier: str, grade: str = "", stored_name: str = "") -> float:
-    """产品身份可信度：有牌号 1.0；只有厂商 0.35；什么都没有 0.2。
+def identity_confidence(
+    supplier: str, grade: str = "", stored_name: str = "", doc_type: str = ""
+) -> float:
+    """产品身份可信度：有牌号 1.0；文献 0.6；只有厂商 0.35；什么都没有 0.2。
 
     抽不到产品名的记录也可能是真实数据，但它无法归属到任何具体产品，
     对「XX 牌号耐温多少」这类问题没有证据价值，置信度必须如实反映这一点，
     否则一条不知属于谁的耐温值会以 0.9 的置信度冒充证据。
+    文献不同：它本来就没有牌号，作为文献证据是可信的，只是不能当产品证据。
     """
     if not is_unnamed(product_title(supplier, grade, stored_name)):
         return 1.0
+    if is_literature(doc_type):
+        return IDENTITY_LITERATURE
     return IDENTITY_SUPPLIER_ONLY if clean_supplier(supplier) else IDENTITY_NONE

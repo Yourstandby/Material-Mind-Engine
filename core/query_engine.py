@@ -169,6 +169,20 @@ def product_options() -> list:
         }
     ]
     for item in sorted(items, key=lambda p: p["product_name"]):
+        if item["product_id"] == catalog.LITERATURE:
+            out.append(
+                {
+                    "name": item["product_id"],
+                    "product_id": item["product_id"],
+                    "label": catalog.LITERATURE,
+                    "full": " · ".join(
+                        part for part in ("论文 / 专利 / 报告", item["material_label"]) if part
+                    ),
+                    "hint": "论文、专利、研究报告里无法归属到具体产品的数据",
+                    "count": item["records"],
+                }
+            )
+            continue
         detail = " · ".join(
             part
             for part in (
@@ -250,22 +264,45 @@ def _rerank_rows(question: str, rows: list):
         key=lambda row: (
             -_grade_bonus(question, row[1] or {}),
             _unnamed(row[1] or {}),
+            # 问产品时文献排后；问资料/论文时文献排前
+            _literature(row[1] or {}) if _asks_document(question) else -_literature(row[1] or {}),
             -round(_confidence(row[1] or {}) * 10),
             row[3],
         ),
     )
 
 
-def _unnamed(meta: dict) -> int:
-    """1 = 没有产品名；0 = 有牌号或具体产品。"""
-    title = catalog.product_title(
-        meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+def _doc_type(meta: dict) -> str:
+    return str((meta or {}).get("doc_type") or "")
+
+
+def _title(meta: dict) -> str:
+    meta = meta or {}
+    return catalog.product_title(
+        meta.get("supplier") or "",
+        meta.get("grade") or "",
+        meta.get("product_name") or "",
+        _doc_type(meta),
     )
-    return 1 if catalog.is_unnamed(title) else 0
+
+
+def _is_product(meta: dict) -> bool:
+    title = _title(meta)
+    return not catalog.is_unnamed(title) and title != catalog.LITERATURE
+
+
+def _literature(meta: dict) -> int:
+    return 1 if _title(meta) == catalog.LITERATURE else 0
+
+
+def _unnamed(meta: dict) -> int:
+    """1 = 不是产品（含论文/专利这类文献）；0 = 有牌号或具体产品。"""
+    return 0 if _is_product(meta) else 1
 
 
 def _confidence(meta: dict) -> float:
     """产品身份不明的记录，即使 LLM 自报高分也不能当强证据。"""
+    meta = meta or {}
     try:
         value = float(meta.get("confidence") or 0)
     except (TypeError, ValueError):
@@ -273,7 +310,10 @@ def _confidence(meta: dict) -> float:
     identity = meta.get("identity_confidence")
     if identity is None:
         identity = catalog.identity_confidence(
-            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+            meta.get("supplier") or "",
+            meta.get("grade") or "",
+            meta.get("product_name") or "",
+            _doc_type(meta),
         )
     try:
         identity = float(identity)
@@ -415,13 +455,13 @@ def format_context(docs, metas) -> str:
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
-        title = catalog.product_title(
-            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
-        )
+        title = _title(meta)
         product = "（未标注）" if catalog.is_unnamed(title) else title
         material = meta.get("material_label") or meta.get("material") or ""
         head = [f"[{i}] 产品: {product}"]
-        if catalog.is_unnamed(title):
+        if title == catalog.LITERATURE:
+            head.append("    注意: 这是论文/专利等文献记录，可以作为文献证据引用，但不能当成某个产品的参数")
+        elif catalog.is_unnamed(title):
             head.append("    注意: 这条没标明产品牌号，不属于任何具体产品，不能当某个产品的证据")
         if material:
             head.append(f"    材质: {material}")
@@ -464,9 +504,7 @@ def build_sources(metas) -> list:
         items.append(
             {
                 "index": i,
-                "label": catalog.product_title(
-                    meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
-                ),
+                "label": _title(meta),
                 "product_id": meta.get("product_id") or "",
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
@@ -704,11 +742,11 @@ def product_stats(material: str | None = None, industry: str | None = None,
         if not applications.matches(meta, industry or "", part or "", medium or ""):
             continue
         pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
-        title = catalog.product_title(
-            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
-        )
+        title = _title(meta)
         # 只有厂商名的老数据归到「未标注产品」，不能让 Solvay 变成一个产品
-        if catalog.is_unnamed(title):
+        if title == catalog.LITERATURE:
+            pid = catalog.LITERATURE
+        elif catalog.is_unnamed(title):
             pid, title = catalog.UNNAMED, catalog.UNNAMED
         group = groups.setdefault(
             pid,
@@ -719,6 +757,7 @@ def product_stats(material: str | None = None, industry: str | None = None,
                 "material_label": meta.get("material_label") or "",
                 "supplier": meta.get("supplier") or "",
                 "records": 0,
+                "doc_types": set(),
                 "grades": set(),
                 "sources": set(),
                 "industries": set(),
@@ -729,6 +768,8 @@ def product_stats(material: str | None = None, industry: str | None = None,
             },
         )
         group["records"] += 1
+        if meta.get("doc_type"):
+            group["doc_types"].add(str(meta["doc_type"]))
         if meta.get("grade"):
             group["grades"].add(str(meta["grade"]))
         base = str(meta.get("source") or "").split(" p.")[0]
@@ -742,6 +783,7 @@ def product_stats(material: str | None = None, industry: str | None = None,
     out = []
     for group in groups.values():
         group["grades"] = sorted(group["grades"])[:4]
+        group["doc_types"] = sorted(group["doc_types"])
         group["sources"] = sorted(group["sources"])
         group["documents"] = len(group["sources"])
         group["applications"] = sorted(group["applications"])[:6]
@@ -773,12 +815,16 @@ def doc_products() -> dict:
         if not did:
             continue
         if did not in mapping:
-            title = catalog.product_title(
-                meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
-            )
+            title = _title(meta)
+            if catalog.is_unnamed(title):
+                product_id, product_name = "", ""
+            elif title == catalog.LITERATURE:
+                product_id, product_name = catalog.LITERATURE, catalog.LITERATURE
+            else:
+                product_id, product_name = meta.get("product_id") or "", title
             mapping[did] = {
-                "product_id": "" if catalog.is_unnamed(title) else (meta.get("product_id") or ""),
-                "product_name": "" if catalog.is_unnamed(title) else title,
+                "product_id": product_id,
+                "product_name": product_name,
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
                 "industries": "",
