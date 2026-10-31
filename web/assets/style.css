@@ -763,6 +763,31 @@ kbd {
 .up-row.ok .up-track i { background: var(--accent); }
 .up-row.bad .up-track i { background: var(--danger); }
 .up-row.bad .up-stage { color: var(--danger); }
+
+/* 取消按钮：只在跑的时候出现，不抢视觉重心 */
+.up-cancel {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.04em;
+  color: var(--muted); background: none; border: 1px solid var(--rule-strong);
+  border-radius: 999px; padding: 2px 8px; cursor: pointer;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.up-cancel:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+.up-cancel:disabled { opacity: 0.55; cursor: default; }
+.up-cancel[hidden] { display: none; }
+
+/* 已完成分组：默认收起，避免完成的条目一直在队列里刷屏 */
+.up-group { margin-top: 10px; border-top: 1px solid var(--rule-strong); padding-top: 6px; }
+.up-group-head {
+  width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em;
+  color: var(--muted); padding: 2px 0;
+}
+.up-group-head:hover { color: var(--ink-2); }
+.up-group-head b { color: var(--ink-2); font-weight: 500; }
+.up-caret { display: inline-block; width: 12px; }
+.up-group-body { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.up-group-body[hidden] { display: none; }
+.up-group-body .up-row { opacity: 0.82; }
 .up-row.zero .up-track i { background: #b45309; }
 .up-row.zero .up-stage { color: #b45309; }
 

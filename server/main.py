@@ -131,7 +131,7 @@ async def ingest_file(
         pass
 
     # 后台线程跑抽取，HTTP 立即返回任务号；刷新页面后按任务号恢复进度
-    job = jobs.start(filename, data, collection, run_ingest, material, folder)
+    job = jobs.start(filename, data, collection, run_ingest, material, folder, with_cancel=True)
     return {"job_id": job["id"], "filename": filename, "collection": collection}
 
 
@@ -144,6 +144,15 @@ def api_ingest_jobs(limit: int = 10):
 @app.get("/api/ingest/jobs/{job_id}")
 def api_ingest_job(job_id: str):
     job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
+
+
+@app.post("/api/ingest/jobs/{job_id}/cancel")
+def api_ingest_job_cancel(job_id: str):
+    """取消投喂：当前块跑完后停下，已抽到的记录照常入库。"""
+    job = jobs.cancel(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
     return job

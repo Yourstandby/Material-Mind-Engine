@@ -63,6 +63,8 @@ def create(filename: str, collection: str) -> dict:
         "duplicates": 0,
         "warns": [],
         "error": "",
+        "cancel": False,
+        "cancelled": False,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -117,15 +119,37 @@ def recent(limit: int = 10) -> list[dict]:
     return items
 
 
-def start(filename: str, data: bytes, collection: str, runner, *extra) -> dict:
-    """创建任务并在后台线程跑 runner(filename, data, collection, *extra)。"""
+def cancel(job_id: str) -> dict | None:
+    """标记取消。真正停下由 pipeline 每块检查一次，已抽到的记录照常入库。"""
+    job = get(job_id)
+    if not job:
+        return None
+    if job.get("status") != "running":
+        return job
+    return update(job_id, cancel=True)
+
+
+def is_cancelled(job_id: str) -> bool:
+    job = _read(job_id) or {}
+    return bool(job.get("cancel")) or job.get("status") != "running"
+
+
+def start(filename: str, data: bytes, collection: str, runner, *extra, with_cancel: bool = False) -> dict:
+    """创建任务并在后台线程跑 runner(filename, data, collection, *extra)。
+
+    with_cancel=True 时会给 runner 多传一个 should_cancel 回调（返回 True 表示该停），
+    pipeline 每处理一块检查一次，用户点「取消」后不再继续白跑 LLM。
+    """
     job = create(filename, collection)
     job_id = job["id"]
 
     def worker() -> None:
         try:
+            args = list(extra)
+            if with_cancel:
+                args.append(lambda: is_cancelled(job_id))
             finished = False
-            for event in runner(filename, data, collection, *extra):
+            for event in runner(filename, data, collection, *args):
                 kind = event.get("type")
                 if kind == "stage":
                     update(job_id, stage=event.get("stage") or "", chunks=event.get("chunks") or 0)
@@ -150,6 +174,7 @@ def start(filename: str, data: bytes, collection: str, runner, *extra) -> dict:
                         job_id,
                         status="done",
                         stage="done",
+                        cancelled=bool(event.get("cancelled")),
                         found=event.get("total") or 0,
                         added=event.get("added") or 0,
                         skipped=event.get("skipped") or 0,

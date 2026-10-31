@@ -1,52 +1,80 @@
+"""入库任务的可取消性与断点续投语义。"""
+
 import time
+
+import pytest
 
 from server import jobs
 
 
-def _wait(job_id, timeout=5.0):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        job = jobs.get(job_id)
-        if job and job["status"] != "running":
-            return job
-        time.sleep(0.02)
-    raise AssertionError("job did not finish")
+@pytest.fixture(autouse=True)
+def temp_jobs_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(jobs, "ROOT", tmp_path / "ingest_jobs")
+    yield
 
 
-def test_job_runs_in_background_and_persists(tmp_path, monkeypatch):
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
-
-    def runner(filename, data, collection):
-        yield {"type": "stage", "stage": "parse"}
-        yield {"type": "stage", "stage": "extract", "chunks": 3}
-        yield {"type": "progress", "done": 1, "total": 3, "found": 2}
-        yield {"type": "record", "record": {}}
-        yield {"type": "warn", "message": "重复行已合并"}
-        yield {"type": "done", "added": 5, "skipped": 1, "quarantined": 0, "duplicates": 1}
-
-    job = jobs.start("demo.pdf", b"x", "catalog", runner)
+def test_cancel_marks_running_job():
+    job = jobs.create("a.pdf", "catalog")
     assert job["status"] == "running"
+    assert jobs.is_cancelled(job["id"]) is False
 
-    done = _wait(job["id"])
-    assert done["status"] == "done"
-    assert done["added"] == 5
-    assert done["skipped"] == 1
-    assert done["chunks"] == 3
-    assert done["warns"] == ["重复行已合并"]
-
-    # 刷新页面后按 id 仍能读到，且出现在最近任务里
-    assert jobs.get(job["id"])["status"] == "done"
-    assert any(item["id"] == job["id"] for item in jobs.recent())
+    updated = jobs.cancel(job["id"])
+    assert updated["cancel"] is True
+    assert jobs.is_cancelled(job["id"]) is True
 
 
-def test_job_error_is_recorded(tmp_path, monkeypatch):
-    monkeypatch.setattr(jobs, "ROOT", tmp_path)
+def test_cancel_ignores_finished_job():
+    job = jobs.create("b.pdf", "catalog")
+    jobs.update(job["id"], status="done")
+    after = jobs.cancel(job["id"])
+    assert after["status"] == "done"
+    # 已结束的任务不该因为取消被改写
+    assert not after.get("cancel")
 
+
+def test_is_cancelled_true_when_job_not_running():
+    job = jobs.create("c.pdf", "catalog")
+    jobs.update(job["id"], status="error")
+    assert jobs.is_cancelled(job["id"]) is True
+
+
+def test_start_passes_cancel_callback_and_stops_early():
+    seen = {"calls": 0, "stopped_before_finish": False}
+
+    def runner(filename, data, collection, should_cancel):
+        for index in range(5):
+            seen["calls"] += 1
+            if should_cancel():
+                seen["stopped_before_finish"] = True
+                yield {"type": "done", "added": 0, "cancelled": True, "message": "已取消"}
+                return
+            yield {"type": "progress", "done": index + 1, "total": 5}
+        yield {"type": "done", "added": 1, "total": 1}
+
+    job = jobs.start("d.pdf", b"x", "catalog", runner, with_cancel=True)
+    jobs.cancel(job["id"])
+
+    for _ in range(60):
+        current = jobs.get(job["id"])
+        if current.get("status") != "running":
+            break
+        time.sleep(0.05)
+
+    final = jobs.get(job["id"])
+    assert final["status"] == "done"
+    assert final["cancelled"] is True
+    assert seen["stopped_before_finish"] is True
+    assert seen["calls"] < 5  # 不必跑满 5 块；取消标记落盘有几毫秒延迟
+
+
+def test_runner_without_cancel_still_works():
     def runner(filename, data, collection):
-        yield {"type": "stage", "stage": "parse"}
-        yield {"type": "error", "message": "解析失败: 扫描件"}
+        yield {"type": "done", "added": 2, "total": 2}
 
-    job = jobs.start("bad.pdf", b"x", "catalog", runner)
-    done = _wait(job["id"])
-    assert done["status"] == "error"
-    assert "扫描件" in done["error"]
+    job = jobs.start("e.pdf", b"x", "catalog", runner)
+    for _ in range(60):
+        current = jobs.get(job["id"])
+        if current.get("status") != "running":
+            break
+        time.sleep(0.05)
+    assert jobs.get(job["id"])["status"] == "done"

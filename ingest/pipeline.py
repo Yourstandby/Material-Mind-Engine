@@ -238,8 +238,14 @@ def ingest(
     collection: str = "catalog",
     material_hint: str = "",
     folder_id: str = "",
+    should_cancel=None,
 ):
-    """生成器：逐条抛出进度事件。"""
+    """生成器：逐条抛出进度事件。
+
+    should_cancel 可传入一个 () -> bool 的回调（Web 端用来支持「取消投喂」）：
+    每处理一块前检查一次，需要停就不再继续跑 LLM；已经抽到的记录照常走完入库，
+    所以取消不等于白做——重新投喂同一文件时，已入库的 ID 相同会被跳过，只补剩下的。
+    """
     if not embeddings.ready():
         yield {"type": "error", "message": "未配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL，无法入库"}
         return
@@ -286,7 +292,18 @@ def ingest(
     passages: list[dict] = []
     failed = 0
     last_error = ""
+    cancelled = False
     for index, chunk in enumerate(chunks, start=1):
+        if should_cancel is not None:
+            try:
+                stopped = bool(should_cancel())
+            except Exception:  # noqa: BLE001 - 取消标记读不到就继续，别因此中断入库
+                stopped = False
+            if stopped:
+                cancelled = True
+                _log(f"  第 {index}/{len(chunks)} 块前收到取消，已抽 {len(records)} 条照常入库")
+                yield {"type": "warn", "message": f"已取消：已完成 {index - 1}/{len(chunks)} 块"}
+                break
         label = f"{filename} p.{chunk['page']}"
         try:
             found, found_passages = extract_all(chunk["text"], label)
@@ -310,6 +327,17 @@ def ingest(
         yield {"type": "progress", "done": index, "total": len(chunks), "found": len(records)}
 
     _log(f"  抽取 {len(records)} 条记录 / {len(passages)} 条片段（失败块 {failed}/{len(chunks)}）")
+
+    if cancelled and not records and not passages:
+        yield {
+            "type": "done",
+            "added": 0,
+            "skipped": 0,
+            "quarantined": 0,
+            "cancelled": True,
+            "message": "已取消，尚未抽到可用数据；重新投喂会从整份文件重跑",
+        }
+        return
 
     if not records and not passages:
         if failed == len(chunks):
@@ -435,6 +463,12 @@ def ingest(
         "duplicates": duplicates,
         "total": len(keep),
         "passages": saved_passages,
+        "cancelled": cancelled,
+        "message": (
+            f"已取消：已入库 {len(keep) - len(found_ids)} 条，重新投喂同一文件会跳过已入库的记录"
+            if cancelled
+            else ""
+        ),
     }
 
 

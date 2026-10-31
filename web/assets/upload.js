@@ -70,16 +70,19 @@ function addRow(name, size, collection) {
       <span class="up-arrow">→</span>
       <span class="up-lib">${esc(collection || "catalog")}</span>
       <span class="up-stage">排队中</span>
+      <button class="up-cancel" type="button" hidden>取消</button>
     </div>
     <div class="up-track"><i style="width:2%"></i></div>
     <div class="up-note">${size ? `${(size / 1024).toFixed(0)} KB` : "已提交"}</div>`;
   document.getElementById("upList").appendChild(row);
 
-  return {
+  const cancelBtn = row.querySelector(".up-cancel");
+  const item = {
     el: row,
     bar: row.querySelector(".up-track i"),
     stage: row.querySelector(".up-stage"),
     note: row.querySelector(".up-note"),
+    cancel: cancelBtn,
     found: 0,
     warns: 0,
     lastWarn: "",
@@ -87,6 +90,56 @@ function addRow(name, size, collection) {
     finished: false,
     jobId: "",
   };
+  cancelBtn.addEventListener("click", () => cancelRow(item));
+  return item;
+}
+
+/* 取消投喂：当前块跑完后停下，已抽到的记录照常入库；重新投喂会跳过已入库的 */
+async function cancelRow(row) {
+  if (!row.jobId || row.cancelling) return;
+  row.cancelling = true;
+  row.cancel.disabled = true;
+  row.cancel.textContent = "停止中…";
+  try {
+    const res = await fetch(`/api/ingest/jobs/${encodeURIComponent(row.jobId)}/cancel`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    note(row, "已请求取消，当前块跑完就停，已抽到的会入库", "warn");
+  } catch (err) {
+    row.cancelling = false;
+    row.cancel.disabled = false;
+    row.cancel.textContent = "取消";
+    note(row, `取消失败：${err.message}`, "err");
+  }
+}
+
+/* 已完成的任务收进一个可折叠分组，不再一篇篇堆在队列里 */
+function doneGroup() {
+  let group = document.getElementById("upDoneGroup");
+  if (group) return group;
+  group = document.createElement("div");
+  group.id = "upDoneGroup";
+  group.className = "up-group";
+  group.innerHTML =
+    '<button class="up-group-head" type="button"><span class="up-caret">▸</span>' +
+    '已完成 <b id="upDoneCount">0</b> 份</button><div class="up-group-body" hidden></div>';
+  const head = group.querySelector(".up-group-head");
+  head.addEventListener("click", () => {
+    const body = group.querySelector(".up-group-body");
+    body.hidden = !body.hidden;
+    group.querySelector(".up-caret").textContent = body.hidden ? "▸" : "▾";
+  });
+  document.getElementById("upList").appendChild(group);
+  return group;
+}
+
+function collapseRow(row) {
+  if (!row || !row.el || row.collapsed) return;
+  row.collapsed = true;
+  row.cancel.hidden = true;
+  const group = doneGroup();
+  group.querySelector(".up-group-body").appendChild(row.el);
+  const count = group.querySelector("#upDoneCount");
+  count.textContent = String(Number(count.textContent || 0) + 1);
 }
 
 function setStage(row, text, percent) {
@@ -105,6 +158,7 @@ function renderJob(row, job) {
   if (!job) return;
   row.found = job.found || row.found;
   row.warns = (job.warns || []).length;
+  if (row.cancel) row.cancel.hidden = job.status !== "running";
 
   if (job.status === "running") {
     if (job.stage === "extract") {
@@ -179,7 +233,10 @@ async function pollJob(row, jobId) {
       return;
     }
     renderJob(row, job);
-    if (job.status !== "running") return job;
+    if (job.status !== "running") {
+      collapseRow(row);
+      return job;
+    }
     await sleep(UP_POLL_MS);
   }
 }
@@ -292,6 +349,7 @@ async function restoreJobs(force = false) {
       rows.push({ row, job });
     }
     renderJob(row, job);
+    if (job.status !== "running") collapseRow(row);
   });
 
   const running = recent.filter((job) => job.status === "running" && !upState.polling.has(job.id));
