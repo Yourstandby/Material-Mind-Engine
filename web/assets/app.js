@@ -91,13 +91,21 @@ function renderMD(md) {
       flush();
       closeList();
       const head = ["产品", "材质", "供应商", "关键数据", "测试条件"];
+      // 模型偶尔会照抄字段名当作内容（表头回声），这类行没有信息量，直接丢掉
+      const headSet = new Set([...head, "编号", "应用场景", "字段", "位置1", "位置2", "位置3", "位置4", "位置5", "[编号]"]);
+      const isEcho = (r) =>
+        r.length > 0 &&
+        r.every((c) => !c || headSet.has(c.replace(/\[\d+\]/g, "").trim())) &&
+        r.some((c) => headSet.has(c.trim()));
       const rows = [];
       while (i < lines.length) {
         const row = evCells(lines[i]);
         if (!row) break;
-        rows.push(row);
         i++;
+        if (isEcho(row)) continue;
+        rows.push(row);
       }
+      if (!rows.length) continue;
       const norm = (r) => {
         let c = r.slice();
         // 多出来的列（比如引用编号单独成列）并进「关键数据」，最后一列留给测试条件
