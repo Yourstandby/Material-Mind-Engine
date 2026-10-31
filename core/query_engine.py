@@ -8,6 +8,7 @@ from pathlib import Path
 
 import chromadb
 
+from core import catalog
 from core import embeddings
 from core import applications
 from core import vector_store as vs
@@ -251,11 +252,10 @@ def _rerank_rows(question: str, rows: list):
 
 def _unnamed(meta: dict) -> int:
     """1 = 没有产品名；0 = 有牌号或具体产品。"""
-    name = str(meta.get("grade") or "").strip()
-    product = str(meta.get("product_name") or "").strip()
-    if name or (product and product not in ("未标注产品", "unknown", "")):
-        return 0
-    return 1
+    title = catalog.product_title(
+        meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+    )
+    return 1 if catalog.is_unnamed(title) else 0
 
 
 DOC_WORDS = ("论文", "文献", "资料", "研究", "报告", "原文", "出处")
@@ -391,12 +391,10 @@ def format_context(docs, metas) -> str:
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
-        product = (meta.get("grade") or "").strip()
-        product_name = (meta.get("product_name") or "").strip()
-        if not product and product_name in ("", "未标注产品", "unknown"):
-            product = "（未标注）"
-        else:
-            product = product or product_name
+        title = catalog.product_title(
+            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+        )
+        product = "（未标注）" if catalog.is_unnamed(title) else title
         material = meta.get("material_label") or meta.get("material") or ""
         head = [f"[{i}] 产品: {product}"]
         if material:
@@ -440,7 +438,9 @@ def build_sources(metas) -> list:
         items.append(
             {
                 "index": i,
-                "label": meta.get("grade") or meta.get("product_name") or "未标注产品",
+                "label": catalog.product_title(
+                    meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+                ),
                 "product_id": meta.get("product_id") or "",
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
@@ -677,11 +677,17 @@ def product_stats(material: str | None = None, industry: str | None = None,
         if not applications.matches(meta, industry or "", part or "", medium or ""):
             continue
         pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
+        title = catalog.product_title(
+            meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+        )
+        # 只有厂商名的老数据归到「未标注产品」，不能让 Solvay 变成一个产品
+        if catalog.is_unnamed(title):
+            pid, title = catalog.UNNAMED, catalog.UNNAMED
         group = groups.setdefault(
             pid,
             {
                 "product_id": pid,
-                "product_name": meta.get("product_name") or "未标注产品",
+                "product_name": title,
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
                 "supplier": meta.get("supplier") or "",
@@ -740,9 +746,12 @@ def doc_products() -> dict:
         if not did:
             continue
         if did not in mapping:
+            title = catalog.product_title(
+                meta.get("supplier") or "", meta.get("grade") or "", meta.get("product_name") or ""
+            )
             mapping[did] = {
-                "product_id": meta.get("product_id") or "",
-                "product_name": meta.get("product_name") or "",
+                "product_id": "" if catalog.is_unnamed(title) else (meta.get("product_id") or ""),
+                "product_name": "" if catalog.is_unnamed(title) else title,
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
                 "industries": "",

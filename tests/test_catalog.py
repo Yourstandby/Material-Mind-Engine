@@ -38,3 +38,22 @@ def test_product_key_stable_across_trademark():
 
 def test_product_name_fallback():
     assert catalog.product_name("", "") == "未标注产品"
+
+
+def test_supplier_is_not_product():
+    """只有厂商没有牌号时，产品名不能退回厂商名。"""
+    from core import catalog
+
+    assert catalog.product_name("Solvay", "") == catalog.UNNAMED
+    assert catalog.product_name("3M", "") == catalog.UNNAMED
+    assert catalog.product_name("Solvay", "Varox DBPH-50") == "Solvay Varox DBPH-50"
+
+
+def test_product_title_ignores_stored_supplier_name():
+    """老数据 product_name == supplier 时按未标注处理，回填后自愈。"""
+    from core import catalog
+
+    assert catalog.product_title("Solvay", "", "Solvay") == catalog.UNNAMED
+    assert catalog.product_title("Chemours", "", "Chemours") == catalog.UNNAMED
+    assert catalog.product_title("Solvay", "XPE", "") == "Solvay XPE"
+    assert catalog.product_title("", "", "S-FFKM-1") == "S-FFKM-1"

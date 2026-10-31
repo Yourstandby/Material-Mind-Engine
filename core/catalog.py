@@ -75,14 +75,43 @@ def clean_grade(grade: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+UNNAMED = "未标注产品"
+
+
+def is_unnamed(name: str) -> bool:
+    return str(name or "").strip() in ("", UNNAMED, "unknown", "（未标注）")
+
+
 def product_key(supplier: str, grade: str) -> str:
     return slug(product_name(supplier, grade))
 
 
 def product_name(supplier: str, grade: str) -> str:
     clean_sup, clean_grd = clean_supplier(supplier), clean_grade(grade)
+    # 只有厂商、没有牌号 → 这不是产品。旧实现会退回供应商名，
+    # 导致「产品」列出现 Solvay / 3M / Chemours 这种厂商名冒充产品。
+    if not clean_grd:
+        return UNNAMED
     # "Perlast" + "Perlast G75M" → 去掉重复前缀
     if clean_sup and clean_grd.lower().startswith(clean_sup.lower()):
         clean_sup = ""
     name = f"{clean_sup} {clean_grd}".strip()
-    return name or "未标注产品"
+    return name or UNNAMED
+
+
+def product_title(supplier: str, grade: str = "", stored_name: str = "") -> str:
+    """展示用的产品名，兼容尚未回填的老数据。
+
+    老数据里 product_name 可能等于供应商名（grade 缺失时的旧兜底），
+    这种一律当「未标注产品」，供应商不是产品。
+    """
+    clean_grd = clean_grade(grade)
+    if clean_grd:
+        return product_name(supplier, clean_grd)
+    stored = clean_grade(stored_name)
+    if is_unnamed(stored):
+        return UNNAMED
+    clean_sup = clean_supplier(supplier)
+    if clean_sup and stored.lower() == clean_sup.lower():
+        return UNNAMED
+    return stored
