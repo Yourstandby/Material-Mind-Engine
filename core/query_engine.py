@@ -104,6 +104,13 @@ PROMPT = """你是材料数据助手。检索结果已按「产品」组织，�
     不要出现假名；拿不准的日语词按上下文翻译成中文
 12. 问题里提到的品牌/厂商如果在检索结果里完全找不到，直接说「库中没有该品牌的资料」，
     不要用其他厂商的产品代替
+13. 上下文里标了「（未标注）」的条目不是产品，不要输出成证据行——用户看的是产品，
+    「未标注」刷屏比不回答更糟。只有当问题明确问「资料/论文/研究里怎么说」时，
+    才引用它并注明来源；否则宁可少列几行
+14. 完全相同的行只输出一次；同一产品 + 同一字段 + 同一测试条件的重复值合并成一行，
+    不要同一行罗列 8 遍
+15. 「供应商」「行业」「部件」不是一回事：上下文里「行业与部件」那一行只能用于判断应用场景，
+    不能当供应商写进第三格；供应商无值就留空
 资料:
 {context}
 问题: {question}"""
@@ -226,8 +233,36 @@ def _grade_bonus(question: str, meta: dict) -> int:
 
 
 def _rerank_rows(question: str, rows: list):
-    """rows: (doc, meta, score, order)；按牌号命中优先，其余保持原顺序。"""
-    return sorted(rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), row[3]))
+    """rows: (doc, meta, score, order)。
+
+    排序优先级：
+        1. 问题点名了牌号，该牌号排最前（_grade_bonus）；
+        2. 有牌号/产品的记录排在「未标注产品」前面——没有产品名的记录往往来自
+           论文或综述，把它当产品证据会让用户看到一堆「未标注产品」；
+        3. 其余保持原顺序。
+    “哪些/列出”这类枚举问题不降权，否则会把收不到牌号的资料也挤掉。
+    """
+    if _is_aggregate(question) and any(word in question for word in ENUM_WORDS):
+        return sorted(rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), row[3]))
+    return sorted(
+        rows, key=lambda row: (-_grade_bonus(question, row[1] or {}), _unnamed(row[1] or {}), row[3])
+    )
+
+
+def _unnamed(meta: dict) -> int:
+    """1 = 没有产品名；0 = 有牌号或具体产品。"""
+    name = str(meta.get("grade") or "").strip()
+    product = str(meta.get("product_name") or "").strip()
+    if name or (product and product not in ("未标注产品", "unknown", "")):
+        return 0
+    return 1
+
+
+DOC_WORDS = ("论文", "文献", "资料", "研究", "报告", "原文", "出处")
+
+
+def _asks_document(question: str) -> bool:
+    return any(word in question for word in DOC_WORDS)
 
 
 def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
@@ -334,35 +369,61 @@ def retrieve(
     docs, metas, _scores = retrieve_scored(
         question, collection, top_k, material, product, industry, part, medium
     )
+    # 没有产品名的条目（多见于综述/论文）不是「产品」，不应占着证据位置。
+    # 只有当问题明确在问资料/文献时才保留；否则过滤，全滤掉时再退回原结果避免答不出来。
+    if docs and not _asks_document(question):
+        keep = [(d, m) for d, m in zip(docs, metas) if not _unnamed(m or {})]
+        if keep:
+            docs = [d for d, _m in keep]
+            metas = [m for _d, m in keep]
     return docs, metas
 
 
 def format_context(docs, metas) -> str:
+    """拼检索上下文。
+
+    注意：这里**不能用 «|» 分隔字段**。下游 PROMPT 要求模型用 «|» 分隔输出行，
+    上下文里再用同一个符号，模型就会把这里的「行业」当成「供应商」照搬，
+    实测出现过供应商列显示成「化工」、产品列全是「未标注产品」的回答。
+    改成一字段一行的显式形式，字段名与输出格式对齐。
+    """
     labels = dict(FIELDS)
     lines = []
     for i, (doc, meta) in enumerate(zip(docs, metas), start=1):
         meta = meta or {}
-        product = meta.get("grade") or meta.get("product_name") or meta.get("supplier") or "unknown"
+        product = (meta.get("grade") or "").strip()
+        product_name = (meta.get("product_name") or "").strip()
+        if not product and product_name in ("", "未标注产品", "unknown"):
+            product = "（未标注）"
+        else:
+            product = product or product_name
         material = meta.get("material_label") or meta.get("material") or ""
+        head = [f"[{i}] 产品: {product}"]
+        if material:
+            head.append(f"    材质: {material}")
+        if meta.get("supplier"):
+            head.append(f"    供应商: {meta.get('supplier')}")
         scope = " / ".join(
-            value for value in (meta.get("industries"), meta.get("parts"), meta.get("certs")) if value
-        )
+            str(value) for value in (meta.get("industries"), meta.get("parts")) if value
+        ).replace("|", "、")
+        if scope:
+            head.append(f"    行业与部件: {scope}")
+        head.append(f"    来源: {meta.get('source') or '—'}")
+
         # 文档里存的是英文字段名（cs / chem_resistance），换成中文再喂给模型，
         # 否则模型容易把「耐化学性 280」说成「压缩永久变形 280」
         body = []
         for raw in (doc or "").splitlines():
             key, sep, value = raw.partition(": ")
             if not sep:
-                body.append(raw)
+                body.append("    " + raw)
                 continue
             label = labels.get(key, key)
             # 库里测试温度是纯数字（200），模型会照抄成「测试温度: 200」，补上单位
             if label == "测试温度" and re.fullmatch(r"-?\d+(\.\d+)?", value.strip()):
                 value = f"{value.strip()}°C"
-            body.append(f"{label}: {localize(value)}")
-        lines.append(
-            f"[{i}] {product} | {material} | {scope} | {meta.get('source') or '—'}\n" + "\n".join(body)
-        )
+            body.append(f"    {label}: {localize(value).replace('|', '、')}")
+        lines.append("\n".join(head + body))
     return "\n\n".join(lines)
 
 
@@ -409,7 +470,12 @@ def build_sources(metas) -> list:
 
 
 def stream_tokens(question: str, docs, metas):
-    """逐 token 产出答案文本。"""
+    """逐 token 产出答案文本。
+
+    必须 finally close：前端点「停止」或断网时，这个生成器会被丢弃，
+    不主动关流的话上游连接会挂到超时，网关的并发槽位被一直占着（实测只有 2 个），
+    后续请求全部 429「并发超限」。
+    """
     stream = _llm().chat.completions.create(
         model=_model(),
         stream=True,
@@ -420,12 +486,18 @@ def stream_tokens(question: str, docs, metas):
             }
         ],
     )
-    for chunk in stream:
-        if not chunk.choices:
-            continue
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    try:
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    finally:
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001 - 已经在关流了，不能再抛
+            pass
 
 
 def query(

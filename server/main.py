@@ -253,9 +253,15 @@ def chat(body: Ask, request: Request):
             top_score = max(valid) if valid else None
             yield sse({"type": "meta", "hits": len(docs), "collection": body.collection})
             yield sse({"type": "sources", "items": build_sources(metas)})
-            for token in stream_tokens(question, docs, metas):
-                parts.append(token)
-                yield sse({"type": "token", "text": token})
+            tokens = stream_tokens(question, docs, metas)
+            try:
+                for token in tokens:
+                    parts.append(token)
+                    yield sse({"type": "token", "text": token})
+            finally:
+                # 前端断开时 Starlette 可能直接丢掉生成器而不跑 GC，
+                # 这里显式 close，保证上游流被关、网关并发槽位释放。
+                tokens.close()
             _capture_failure(question, "".join(parts), sources, top_score, username)
             yield sse({"type": "done", "elapsed_ms": int((time.time() - started) * 1000)})
         except KeyError as exc:

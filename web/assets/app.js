@@ -54,7 +54,11 @@ function renderMD(md) {
       const head = cells(line);
       i += 2;
       const rows = [];
-      while (i < lines.length && isRow(lines[i])) rows.push(cells(lines[i++]));
+      while (i < lines.length && isRow(lines[i])) {
+        const row = cells(lines[i++]);
+        if (rows.some((r) => r.join("|") === row.join("|"))) continue;
+        rows.push(row);
+      }
       html +=
         "<table><thead><tr>" +
         head.map((c) => `<th>${inline(c)}</th>`).join("") +
@@ -103,6 +107,8 @@ function renderMD(md) {
         if (!row) break;
         i++;
         if (isEcho(row)) continue;
+        // 同一行重复出现（同产品同值的多条来源）只留一条，否则用户看到一屏重复
+        if (rows.some((r) => r.join("|") === row.join("|"))) continue;
         rows.push(row);
       }
       if (!rows.length) continue;
