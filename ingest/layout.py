@@ -83,7 +83,9 @@ def _column_bounds(rows: list[list[dict]], page_width: float) -> list[tuple[floa
     # 阈值取低一些：表格页往往还夹着标题、图注、页码，这些行占了行数很大比例，
     # 用 40% 会把整页都判成通道，表格永远切不出来。
     threshold = max(2, int(len(rows) * 0.15))
-    gap_min = max(8.0, page_width * 0.015)
+    # 数值列之间的空白往往只有 4~8pt，下限取 8pt 时相邻两列会并成一格（如「15 18」）。
+    # 误切的代价由「多数行必须都空白」这个条件把住，不靠大阈值。
+    gap_min = max(3.0, page_width * 0.006)
 
     # 把「低覆盖率」的连续区间当成列间隙
     columns: list[list[float]] = []
@@ -160,15 +162,45 @@ def _md_cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ").strip()
 
 
-def to_markdown(grid: list[list[str]]) -> str:
-    """矩阵 → Markdown 表格，首行当表头。"""
+def _looks_like_header(row: list[str]) -> bool:
+    """首行是不是真实表头（而非页眉）。
+
+    页眉的典型特征：夹着页码、或只有文档标题那一两个横跨多列的长单元格。
+    误把页眉当表头，下游 LLM 拿到的列名就是文档名，从此对错列。
+    """
+    cells = [c.strip() for c in row if c.strip()]
+    if len(cells) < 3:
+        return False
+    # 单独的数字格子：页码、页脚
+    if any(re.fullmatch(r"\d{1,3}", c) for c in cells):
+        return False
+    # 表头单元格都很短；含长句说明这是正文被切进了表格
+    return all(len(c) <= 12 for c in cells)
+
+
+def to_markdown(grid: list[list[str]], head: list[str] | None = None) -> str:
+    """矩阵 → Markdown 表格。
+
+    head 为空时用首行；首行不像表头（页眉/文档标题）则改用「列1..列N」占位，
+    并把原首行降为数据行——错误列名比无名列危害大，至少不丢数据。
+    """
     if not grid:
         return ""
     width = max(len(row) for row in grid)
     grid = [row + [""] * (width - len(row)) for row in grid]
-    head, body = grid[0], grid[1:]
-    out = ["| " + " | ".join(_md_cell(c) for c in head) + " |"]
-    out.append("| " + " | ".join("---" for _ in head) + " |")
+
+    if head is not None:
+        names = list(head)[:width] + [""] * max(0, width - len(head))
+        body = grid
+    elif _looks_like_header(grid[0]):
+        names = grid[0]
+        body = grid[1:]
+    else:
+        names = [f"列{i}" for i in range(1, width + 1)]
+        body = grid
+
+    out = ["| " + " | ".join(_md_cell(c) for c in names) + " |"]
+    out.append("| " + " | ".join("---" for _ in names) + " |")
     for row in body:
         out.append("| " + " | ".join(_md_cell(c) for c in row) + " |")
     return "\n".join(out)
@@ -191,9 +223,21 @@ def _is_table_like(grid: list[list[str]]) -> bool:
     if not lengths:
         return False
     lengths.sort()
-    median_len = lengths[len(lengths) // 2]
-    # 表格单元格中位数很少超过 20 字；超过说明这是被切碎的整句段落
-    return median_len <= 20
+    # 中位数超 20 字、或尾部有长句，都说明这是被切碎的整句段落
+    if lengths[len(lengths) // 2] > 20:
+        return False
+    if lengths[int(len(lengths) * 0.9)] > 30:
+        return False
+
+    # 真表格通常至少有 2 列是数值列；叙述页的数字散在各列，凑不出来
+    numeric_cols = 0
+    for col in range(len(grid[0])):
+        values = [row[col].strip() for row in dense_rows if row[col].strip()]
+        if len(values) < 2:
+            continue
+        if sum(1 for v in values if re.search(r"\d", v)) / len(values) >= 0.5:
+            numeric_cols += 1
+    return numeric_cols >= 2
 
 
 def render(lines: list[dict], page_width: float = 1000.0) -> tuple[str, bool]:
