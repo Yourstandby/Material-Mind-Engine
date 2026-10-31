@@ -62,15 +62,17 @@ def _raw_text_layer(pdf: Path) -> list[str]:
     return pages
 
 
-def _pages_of(pdf: Path) -> list[str]:
-    """走完整解析链路（含 OCR 降级），用来看「最终拿到了多少字」。"""
+def _parsed(pdf: Path) -> dict:
+    """走完整解析链路（含 OCR 降级与版面还原）。"""
     data = pdf.read_bytes()
     try:
-        result = parse.parse(pdf.name, data)
+        return parse.parse(pdf.name, data)
     except Exception as exc:  # noqa: BLE001 - 单份失败不影响整体基线
-        return [f"!! 解析失败 {type(exc).__name__}: {exc}"]
-    pages = [p["text"] for p in result.get("pages") or []]
-    return pages
+        return {"pages": [{"page": 1, "text": f"!! 解析失败 {type(exc).__name__}: {exc}"}]}
+
+
+def _pages_of(pdf: Path) -> list[str]:
+    return [p["text"] for p in _parsed(pdf).get("pages") or []]
 
 
 def _ocr_pages(pdf: Path, limit: int) -> list[str]:
@@ -101,6 +103,7 @@ def measure(pdf: Path, limit: int, use_ocr: bool) -> dict:
         # 跑完解析（含 OCR 降级）仍然没字 = 真的抽不出来
         "final_empty_pages": final_empty,
         "chars": sum(len(t.strip()) for t in pages),
+        "layout_table_pages": sum(1 for p in _parsed(pdf).get("pages") or [] if p.get("layout") == "table"),
         "suspect_line_pages": sum(1 for t in pages if _suspect(t)),
         "ocr_pages": 0,
         "table_pages": 0,
@@ -145,13 +148,13 @@ def main() -> int:
     OUT_JSON.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
 
     lines = ["# 抽取基线", ""]
-    lines.append("| 文件 | 页数 | 文本层页 | 扫描页 | 仍空白页 | 字符 | 含数值缺单位页 | OCR 页 | 表格页 | 低置信行 |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| 文件 | 页数 | 文本层页 | 扫描页 | 仍空白页 | 字符 | 版面表格页 | 含数值缺单位页 | OCR 页 | OCR 表格页 | 低置信行 |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
     for r in records:
         lines.append(
             f"| {r['file']} | {r['pages']} | {r['text_layer_pages']} | {len(r['scan_pages'])} | "
-            f"{len(r['final_empty_pages'])} | {r['chars']} | {r['suspect_line_pages']} | "
-            f"{r['ocr_pages']} | {r['table_pages']} | {r['low_conf_lines']} |"
+            f"{len(r['final_empty_pages'])} | {r['chars']} | {r['layout_table_pages']} | "
+            f"{r['suspect_line_pages']} | {r['ocr_pages']} | {r['table_pages']} | {r['low_conf_lines']} |"
         )
     totals = {
         "pages": sum(r["pages"] for r in records),

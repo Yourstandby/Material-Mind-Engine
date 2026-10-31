@@ -19,14 +19,30 @@ def test_render_detects_two_column_table():
         _line("G-102", 10, 70, 70, 90),
         _line("225°C", 200, 70, 260, 90),
         _line("21 h", 400, 70, 450, 90),
+        _line("G-103", 10, 100, 70, 120),
+        _line("250°C", 200, 100, 260, 120),
+        _line("21 h", 400, 100, 450, 120),
+        _line("G-104", 10, 130, 70, 150),
+        _line("300°C", 200, 130, 260, 150),
+        _line("70 h", 400, 130, 450, 150),
     ]
     text, is_table = layout.render(lines, 500)
     assert is_table is True
-    assert text.count("\n") >= 3  # 表头 + 分隔 + 2 行数据
+    assert text.count("\n") >= 4  # 表头 + 分隔 + 4 行数据
     assert "G-101" in text and "200°C" in text
     # 同一行必须落在同一行，不能把温度绑到下一行牌号
     row = next(l for l in text.splitlines() if "G-101" in l)
     assert "200°C" in row and "70 h" in row
+
+
+def test_two_column_prose_is_not_a_table():
+    """双栅叙述页不能被当成表格重排。"""
+    lines = []
+    for i in range(6):
+        lines.append(_line("这是一个很长的句子说明" if i % 2 == 0 else "另一句同样长的说明文字", 10, i * 20, 250, i * 20 + 16))
+        lines.append(_line("右栅同样是完整的叙述句子内容", 300, i * 20, 560, i * 20 + 16))
+    text, is_table = layout.render(lines, 600)
+    assert is_table is False
 
 
 def test_render_falls_back_to_plain_text_for_single_column():

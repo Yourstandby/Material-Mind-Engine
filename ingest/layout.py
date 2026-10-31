@@ -56,27 +56,67 @@ def _rows(lines: list[dict], tolerance: float) -> list[list[dict]]:
 
 
 def _column_bounds(rows: list[list[dict]], page_width: float) -> list[tuple[float, float]]:
-    """用 x 投影的空白间隙切列。间隙太窄（例如同一列内两个词之间的空格）不算列边界。"""
-    spans = sorted((it["x0"], it["x1"]) for row in rows for it in row)
-    if not spans:
+    """找列边界：只有「多数行都在此空白」的 x 区间才算列间隙（gutter）。
+
+    早先的做法是把全页所有文本框做并集再找空隙，但标题、跨栏长句会横跨全宽，
+    整页归一列，表格就永远切不出来。改成按行多数投票：
+    某个 x 位置被少于 40% 的行覆盖，才算真正的列间空白。
+    """
+    if not rows:
         return [(0.0, page_width)]
 
-    merged: list[list[float]] = [list(spans[0])]
-    for x0, x1 in spans[1:]:
-        if x0 <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], x1)
-        else:
-            merged.append([x0, x1])
+    width = max(int(page_width) + 1, 2)
+    cover = [0] * width
+    for row in rows:
+        spans = sorted((it["x0"], it["x1"]) for it in row)
+        merged: list[list[float]] = []
+        for x0, x1 in spans:
+            if merged and x0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], x1)
+            else:
+                merged.append([x0, x1])
+        for x0, x1 in merged:
+            for x in range(max(0, int(x0)), min(int(x1) + 1, width)):
+                cover[x] += 1
 
-    # 合并被极窄间隙隔开的分段：只有明显的列间空白才切
+    # 列间隙的特征是「几乎所有行都空」，而标题/图注这类跨宽行最多 +1 票，不会把列内容区变成通道。
+    # 阈值取低一些：表格页往往还夹着标题、图注、页码，这些行占了行数很大比例，
+    # 用 40% 会把整页都判成通道，表格永远切不出来。
+    threshold = max(2, int(len(rows) * 0.15))
     gap_min = max(8.0, page_width * 0.015)
-    bounds: list[list[float]] = [merged[0]]
-    for x0, x1 in merged[1:]:
-        if x0 - bounds[-1][1] < gap_min:
-            bounds[-1][1] = max(bounds[-1][1], x1)
-        else:
-            bounds.append([x0, x1])
-    return [(b[0], b[1]) for b in bounds]
+
+    # 把「低覆盖率」的连续区间当成列间隙
+    columns: list[list[float]] = []
+    run_start = None
+    for x in range(width):
+        if cover[x] < threshold:
+            if run_start is None:
+                run_start = x
+            continue
+        if run_start is not None:
+            if x - run_start >= gap_min:
+                columns.append([run_start, x])
+            run_start = None
+    if run_start is not None and width - run_start >= gap_min:
+        columns.append([run_start, width - 1])
+
+    if not columns:
+        return [(0.0, page_width)]
+
+    # 间隙之外的部分就是列
+    bounds: list[tuple[float, float]] = []
+    cursor = 0.0
+    for start, end in columns:
+        if start - cursor > 1:
+            bounds.append((cursor, float(start)))
+        cursor = float(end)
+    if page_width - cursor > 1:
+        bounds.append((cursor, page_width))
+
+    # 切得太碎（超过 15 列）说明这不是规整表格，宁可退回单列跑纯文本
+    if not 2 <= len(bounds) <= 15:
+        return [(0.0, page_width)]
+    return bounds
 
 
 def _cell_index(x_center: float, bounds: list[tuple[float, float]]) -> int:
@@ -110,7 +150,8 @@ def to_table(lines: list[dict], page_width: float = 1000.0) -> list[list[str]]:
         for item in row:
             index = _cell_index((item["x0"] + item["x1"]) / 2, bounds)
             cells[index] = f"{cells[index]} {item['text']}".strip()
-        if any(cells):
+        # 只占一列的“行”通常是页眉、图注、页码，混进来会把表头挤到第一行
+        if sum(1 for c in cells if c.strip()) >= 2:
             grid.append(cells)
     return grid if len(grid) >= 2 else []
 
@@ -134,11 +175,25 @@ def to_markdown(grid: list[list[str]]) -> str:
 
 
 def _is_table_like(grid: list[list[str]]) -> bool:
-    """列数 ≥2，且至少两行有 ≥2 个非空单元格——避免把单列表述硬拆成表格。"""
-    if not grid or len(grid[0]) < 2:
+    """判断是否真是表格，宁严不宽。
+
+    误判的代价比漏判大：双栏叙述页被当成表格后会重排，把原本正确的阅读顺序弄乱。
+    表格的特征是「多列、多行、单元格短」：叙述行的单元格是一整句，长度骗不了人。
+    """
+    if not grid or len(grid[0]) < 3 or len(grid) < 4:
         return False
-    dense = sum(1 for row in grid if sum(1 for c in row if c.strip()) >= 2)
-    return dense >= 2
+    dense_rows = [row for row in grid if sum(1 for c in row if c.strip()) >= 3]
+    if len(dense_rows) < 4:
+        return False
+    if len(dense_rows) / len(grid) < 0.6:
+        return False
+    lengths = [len(c.strip()) for row in dense_rows for c in row if c.strip()]
+    if not lengths:
+        return False
+    lengths.sort()
+    median_len = lengths[len(lengths) // 2]
+    # 表格单元格中位数很少超过 20 字；超过说明这是被切碎的整句段落
+    return median_len <= 20
 
 
 def render(lines: list[dict], page_width: float = 1000.0) -> tuple[str, bool]:

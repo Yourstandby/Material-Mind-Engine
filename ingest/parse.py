@@ -45,6 +45,37 @@ def _render_page(data: bytes, page_no: int) -> bytes:
     return buffer.getvalue()
 
 
+def _pdfium_doc(data: bytes):
+    import pypdfium2 as pdfium
+
+    return pdfium.PdfDocument(io.BytesIO(data))
+
+
+def _table_text(document, index: int, text: str) -> tuple[str, bool]:
+    """有文本层的页：只有当版面能还原出表格时才替换成 Markdown 表格。
+
+    普通段落保留原文本——原文本的阅读顺序通常比几何重排更自然，
+    盲目重排反而会把跨栏正文拼错。
+    """
+    if len(text.strip()) < 40:
+        return text, False
+    # 字体缺 ToUnicode 的页（日文资料常见）字形都是 U+FFFD，重排只会把乱码搅得更乱
+    if text.count("\ufffd") > max(3, len(text) * 0.01):
+        return text, False
+    try:
+        from ingest import pdftext
+
+        rebuilt, is_table = pdftext.to_markdown(document, index - 1)
+    except Exception:  # noqa: BLE001 - 版面还原失败就退回原文本
+        return text, False
+    if not is_table or rebuilt.count("|") < 8:
+        return text, False
+    # ���格还原多了会丢字：字数明显变少就不采用
+    if len(rebuilt.replace("|", "").replace(" ", "")) < len(text.strip()) * 0.6:
+        return text, False
+    return rebuilt, True
+
+
 def _pdf_pdfium(data: bytes, name: str) -> dict:
     """用 pdfium 解析：AES 加密的 PDF 需要 cryptography，本机没装时靠 pdfium 自带的解密。"""
     import pypdfium2 as pdfium
@@ -79,8 +110,13 @@ def _pdf_pdfium(data: bytes, name: str) -> dict:
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"第 {index} 页补 OCR 失败: {type(exc).__name__}: {exc}")
 
+        if text.strip() and not _broken(text):
+            text, is_table = _table_text(document, index, text)
+            if is_table:
+                warnings.append(f"第 {index} 页已按版面还原为表格")
+
         if text.strip():
-            pages.append({"page": index, "text": text})
+            pages.append({"page": index, "text": text, "layout": "table" if text.lstrip().startswith("|") else "text"})
         else:
             warnings.append(f"第 {index} 页无文本层（可能是扫描件）")
     return {"file": name, "pages": pages, "warnings": warnings}
@@ -163,8 +199,17 @@ def _pdf(data: bytes, name: str):
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"第 {index} 页补 OCR 失败: {type(exc).__name__}: {exc}")
 
+        if text.strip() and not _broken(text):
+            if document is None:
+                document = _pdfium_doc(data)
+            text, is_table = _table_text(document, index, text)
+            if is_table:
+                warnings.append(f"第 {index} 页已按版面还原为表格")
+
         if text.strip():
-            pages.append({"page": index, "text": text})
+            pages.append(
+                {"page": index, "text": text, "layout": "table" if text.lstrip().startswith("|") else "text"}
+            )
         else:
             warnings.append(f"第 {index} 页无文本层（可能是扫描件，需配置 OCR）")
 

@@ -1,13 +1,14 @@
 # 抽取基线
 
-| 文件 | 页数 | 文本层页 | 扫描页 | 仍空白页 | 字符 | 含数值缺单位页 | OCR 页 | 表格页 | 低置信行 |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1739DC08F4B289E12FCEDC67A761480A.pdf | 12 | 12 | 0 | 0 | 49759 | 12 | 0 | 0 | 0 |
-| 2009_patent_unknown_us000007576164b220090818.pdf | 8 | 0 | 8 | 0 | 45153 | 8 | 2 | 1 | 1 |
-| 41FF86C3A3B6883C04F36A83ADF65F59.pdf | 5 | 5 | 0 | 0 | 20546 | 5 | 0 | 0 | 0 |
-| 78DDAD8A82B625086A63D17EA8F612B5.pdf | 4 | 4 | 0 | 0 | 15950 | 4 | 0 | 0 | 0 |
-| E10.pdf | 20 | 20 | 0 | 0 | 69448 | 18 | 0 | 0 | 0 |
-| ffkm.pdf | 17 | 17 | 0 | 0 | 88032 | 17 | 0 | 0 | 0 |
-| NOK Oring.pdf | 103 | 102 | 1 | 1 | 235853 | 103 | 1 | 0 | 0 |
+| 文件 | 页数 | 文本层页 | 扫描页 | 仍空白页 | 字符 | 版面表格页 | 含数值缺单位页 | OCR 页 | OCR 表格页 | 低置信行 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1739DC08F4B289E12FCEDC67A761480A.pdf | 12 | 12 | 0 | 0 | 49759 | 0 | 12 | 0 | 0 | 0 |
+| 2009_patent_unknown_us000007576164b220090818.pdf | 8 | 0 | 8 | 0 | 44770 | 1 | 8 | 0 | 0 | 0 |
+| 2025_paper_ffkm_lifetime-prediction-and-degradation-assessment-of-fkm-and-ff.pdf | 17 | 17 | 0 | 0 | 84736 | 9 | 17 | 0 | 0 | 0 |
+| 41FF86C3A3B6883C04F36A83ADF65F59.pdf | 5 | 5 | 0 | 0 | 20546 | 0 | 5 | 0 | 0 | 0 |
+| 78DDAD8A82B625086A63D17EA8F612B5.pdf | 4 | 4 | 0 | 0 | 15950 | 0 | 4 | 0 | 0 | 0 |
+| E10.pdf | 20 | 20 | 0 | 0 | 74954 | 5 | 19 | 0 | 0 | 0 |
+| NOK Oring.pdf | 103 | 102 | 1 | 1 | 323659 | 67 | 100 | 0 | 0 | 0 |
+| Sealing_performance_of_rubber_seals_under_extreme_downhole_conditions(科研通-ablesci.com).pdf | 9 | 9 | 0 | 0 | 33197 | 6 | 9 | 0 | 0 | 0 |
 
-合计: {'pages': 169, 'scan_pages': 9, 'still_empty': 1, 'text_layer_pages': 160, 'ocr_pages': 3, 'table_pages': 1, 'low_conf_lines': 1}
+合计: {'pages': 178, 'scan_pages': 9, 'still_empty': 1, 'text_layer_pages': 169, 'ocr_pages': 0, 'table_pages': 0, 'low_conf_lines': 0}
