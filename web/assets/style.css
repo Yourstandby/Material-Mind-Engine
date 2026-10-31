@@ -142,11 +142,15 @@ kbd {
 .res-select { max-width: 260px; }
 .folder-select { max-width: 170px; }
 .folder-btn {
-  border: 0; background: transparent; color: var(--muted); cursor: pointer;
+  height: 26px; padding: 0 8px; white-space: nowrap;
+  border: 1px solid var(--rule-strong); border-radius: 5px;
+  background: transparent; color: var(--ink-2); cursor: pointer;
   font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em;
-  padding: 4px 5px; border-radius: 3px; white-space: nowrap;
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease), color 0.16s var(--ease);
 }
 .folder-btn:hover { color: var(--ink); background: var(--surface-2); }
+.folder-btn:active { transform: scale(0.97); }
+.folder-btn:disabled { opacity: 0.4; cursor: default; background: transparent; }
 .up-folder {
   margin-left: auto; max-width: 130px; border: 0; border-bottom: 1px solid var(--rule);
   background: transparent; color: var(--muted); font-family: var(--mono);

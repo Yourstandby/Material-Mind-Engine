@@ -710,34 +710,38 @@ async function runSearch() {
   hydrateIcons();
   renderSeg();
 
-  document.getElementById("viewChat").addEventListener("click", () => switchView("chat"));
-  document.getElementById("viewResources").addEventListener("click", () => switchView("resources"));
-  document.getElementById("nav").addEventListener("click", () => switchView("chat"));
+  const on = (id, event, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+  };
 
-  document.getElementById("resFilter").addEventListener("input", (e) => {
+  on("viewChat", "click", () => switchView("chat"));
+  on("viewResources", "click", () => switchView("resources"));
+
+  on("resFilter", "input", (e) => {
     resState.filter = e.target.value;
     renderResList();
   });
 
-  document.getElementById("searchBtn").addEventListener("click", runSearch);
-  document.getElementById("searchTest").addEventListener("keydown", (e) => {
+  on("searchBtn", "click", runSearch);
+  on("searchTest", "keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       runSearch();
     }
   });
 
-  document.getElementById("drawerClose").addEventListener("click", closeDrawer);
-  document.getElementById("drawerCancel").addEventListener("click", closeDrawer);
-  document.getElementById("drawerDelete").addEventListener("click", deleteCurrent);
-  document.getElementById("drawerReparse").addEventListener("click", reparseCurrent);
+  on("drawerClose", "click", closeDrawer);
+  on("drawerCancel", "click", closeDrawer);
+  on("drawerDelete", "click", deleteCurrent);
+  on("drawerReparse", "click", reparseCurrent);
 
-  document.getElementById("bulkDelete").addEventListener("click", bulkDelete);
-  document.getElementById("bulkExport").addEventListener("click", bulkExport);
+  on("bulkDelete", "click", bulkDelete);
+  on("bulkExport", "click", bulkExport);
 
-  document.getElementById("folderNew").addEventListener("click", createFolder);
-  document.getElementById("folderRename").addEventListener("click", renameFolder);
-  document.getElementById("folderDelete").addEventListener("click", deleteFolder);
+  on("folderNew", "click", createFolder);
+  on("folderRename", "click", renameFolder);
+  on("folderDelete", "click", deleteFolder);
   loadFolders();
 
   document.addEventListener("keydown", (e) => {

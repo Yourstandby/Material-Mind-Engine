@@ -339,6 +339,7 @@ async function refreshCollections() {
     if (data.collections) state.collections = data.collections;
     if (data.applications) state.applications = data.applications.industries || [];
     renderNav();
+    if (typeof renderSeg === "function") renderSeg();
     renderChips();
     setActive(state.active);
   } catch (e) {
@@ -805,6 +806,8 @@ async function boot() {
   if (savedApp && state.applications.some((a) => a.code === savedApp)) state.industry = savedApp;
 
   renderNav();
+  if (typeof renderSeg === "function") renderSeg();
+  if (typeof renderFolderSelects === "function") renderFolderSelects();
   renderChips();
   setActive(state.active);
 }
