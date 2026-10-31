@@ -133,19 +133,42 @@ def _cell_index(x_center: float, bounds: list[tuple[float, float]]) -> int:
     return best
 
 
-def to_table(lines: list[dict], page_width: float = 1000.0) -> list[list[str]]:
-    """返回二维单元格矩阵；行数不足 2 或列数不足 2 时返回空列表（说明不是表格）。"""
-    heights = [(_box(l)[3] - _box(l)[1]) for l in lines if str(l.get("text") or "").strip()]
-    heights = [h for h in heights if h > 0]
-    tolerance = (sorted(heights)[len(heights) // 2] if heights else 20.0) * 0.6
+def _split_bands(rows: list[list[dict]]) -> list[list[list[dict]]]:
+    """按垂直大间隙把页面切成多个「表带」。
 
-    rows = _rows(lines, tolerance)
+    一页常放两三个表格（比如不同介质的两张耐化学性矩阵），
+    不分带就会把两张表的行缝到同一张网格里，列也对不上。
+    """
     if len(rows) < 2:
-        return []
-    bounds = _column_bounds(rows, page_width)
-    if len(bounds) < 2:
-        return []
+        return [rows] if rows else []
 
+    heights = sorted(c["h"] for row in rows for c in row if row)
+    line_h = heights[len(heights) // 2] if heights else 10.0
+    centers = [sum(c["y"] for c in row) / len(row) for row in rows]
+    gaps = [abs(centers[i] - centers[i - 1]) for i in range(1, len(centers))]
+    normal = sorted(gaps)[len(gaps) // 2] if gaps else line_h
+    threshold = max(line_h * 2.0, normal * 2.5)
+
+    bands: list[list[list[dict]]] = [[rows[0]]]
+    for index in range(1, len(rows)):
+        if gaps[index - 1] > threshold:
+            bands.append([])
+        bands[-1].append(rows[index])
+    return [band for band in bands if band]
+
+
+def _drop_empty_columns(grid: list[list[str]]) -> list[list[str]]:
+    """删掉全空列：列聚类靠空白间隙，偶尔会在同一词内切出假列，留下整列空。"""
+    if not grid:
+        return grid
+    keep = [i for i in range(len(grid[0])) if any(row[i].strip() for row in grid)]
+    return [[row[i] for i in keep] for row in grid] if keep else grid
+
+
+def _grid_of(rows: list[list[dict]], page_width: float) -> list[list[str]]:
+    bounds = _column_bounds(rows, page_width)
+    if not 2 <= len(bounds) <= 15:
+        return []
     grid: list[list[str]] = []
     for row in rows:
         cells = [""] * len(bounds)
@@ -155,7 +178,34 @@ def to_table(lines: list[dict], page_width: float = 1000.0) -> list[list[str]]:
         # 只占一列的“行”通常是页眉、图注、页码，混进来会把表头挤到第一行
         if sum(1 for c in cells if c.strip()) >= 2:
             grid.append(cells)
+    grid = _drop_empty_columns(grid)
     return grid if len(grid) >= 2 else []
+
+
+def to_tables(lines: list[dict], page_width: float = 1000.0) -> list[list[list[str]]]:
+    """把 OCR / 字符框行还原成若干单元格矩阵（一页可能多个表）。"""
+    heights = [(_box(l)[3] - _box(l)[1]) for l in lines if str(l.get("text") or "").strip()]
+    heights = [h for h in heights if h > 0]
+    tolerance = (sorted(heights)[len(heights) // 2] if heights else 20.0) * 0.6
+
+    rows = _rows(lines, tolerance)
+    if len(rows) < 2:
+        return []
+
+    grids = []
+    for band in _split_bands(rows):
+        if len(band) < 2:
+            continue
+        grid = _grid_of(band, page_width)
+        if grid:
+            grids.append(grid)
+    return grids
+
+
+def to_table(lines: list[dict], page_width: float = 1000.0) -> list[list[str]]:
+    """兼容旧调用：返回最大的那张表。"""
+    grids = to_tables(lines, page_width)
+    return max(grids, key=len) if grids else []
 
 
 def _md_cell(text: str) -> str:
@@ -248,9 +298,9 @@ def render(lines: list[dict], page_width: float = 1000.0) -> tuple[str, bool]:
     if not lines:
         return "", False
 
-    grid = to_table(lines, page_width)
-    if _is_table_like(grid):
-        return to_markdown(grid), True
+    grids = [g for g in to_tables(lines, page_width) if _is_table_like(g)]
+    if grids:
+        return "\n\n".join(to_markdown(grid) for grid in grids).strip(), True
 
     rows = _rows(lines, 20.0)
     text = "\n".join(" ".join(it["text"] for it in row) for row in rows if row)
