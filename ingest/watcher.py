@@ -47,7 +47,9 @@ def _candidates():
     for path in sorted(INBOX.rglob("*")):
         if not path.is_file():
             continue
-        if DONE.name in path.parts or FAILED.name in path.parts:
+        rel = path.relative_to(INBOX)
+        # _done / _failed / _removed 等以下划线开头的目录不参与守护
+        if any(part.startswith(("_", ".")) for part in rel.parts[:-1]):
             continue
         if path.suffix.lower() not in SUPPORTED:
             continue
