@@ -140,6 +140,7 @@ kbd {
 }
 .product-select:hover, .product-select:focus { border-bottom-color: var(--accent); }
 .res-select { max-width: 260px; }
+.app-select { max-width: 190px; }
 .coll-count {
   margin-left: auto; font-family: var(--mono); font-size: 10px;
   letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);

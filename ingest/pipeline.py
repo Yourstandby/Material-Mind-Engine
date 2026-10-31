@@ -12,6 +12,7 @@ from pathlib import Path
 import chromadb
 
 from core import catalog, embeddings
+from core import applications
 from core import vector_store as vs
 from core.config import env
 from core.query_engine import FIELDS as FIELD_LABELS
@@ -45,6 +46,9 @@ def serialize(record: dict) -> str:
     for key, value in record.items():
         if value in (None, "", [], {}):
             continue
+        # 行业/部件等原文已归一成中文标签，不重复进向量文本
+        if key in ("industry", "part", "medium", "certifications", "industry_codes", "parts_codes"):
+            continue
         if key == "material":
             value = catalog.material_label(str(value))
         elif isinstance(value, str):
@@ -67,6 +71,8 @@ def _meta(record: dict, doc_id: str = "", material_hint: str = "") -> dict:
     meta["product_name"] = catalog.product_name(supplier, grade)
     meta["material"] = material
     meta["material_label"] = catalog.material_label(material)
+    # 应用是第一等维度：行业 / 部件 / 介质 / 认证（字符串，可直接入库）
+    meta.update(applications.enrich(record))
     return meta
 
 
@@ -221,6 +227,7 @@ def ingest(filename: str, data: bytes, collection: str = "catalog", material_hin
                 record["material"] = hint
             if not record.get("supplier") and doc_supplier:
                 record["supplier"] = doc_supplier
+            record.update(applications.enrich(record))
         records.extend(found)
         yield {"type": "progress", "done": index, "total": len(chunks), "found": len(records)}
 

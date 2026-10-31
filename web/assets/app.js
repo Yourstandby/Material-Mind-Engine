@@ -8,7 +8,7 @@ const EXAMPLES = [
   "这个产品在哪些介质里耐化学性最好？",
 ];
 
-const state = { collections: [], active: "all", busy: false, controller: null };
+const state = { collections: [], applications: [], active: "all", industry: "", busy: false, controller: null };
 
 /* ───────── 工具 ───────── */
 
@@ -170,6 +170,28 @@ function renderNav() {
     .join("");
   select.value = state.active;
   select.onchange = () => setActive(select.value);
+  renderAppNav();
+}
+
+function renderAppNav() {
+  const select = $("#appSelect");
+  if (!select) return;
+  const options = [{ code: "", label: "全部应用" }].concat(state.applications || []);
+  select.innerHTML = options
+    .map(
+      (a) =>
+        `<option value="${esc(a.code)}" title="${esc(a.label)}">${esc(a.label)}${
+          a.count ? ` · ${a.count}` : ""
+        }</option>`
+    )
+    .join("");
+  select.value = state.industry;
+  select.onchange = () => {
+    state.industry = select.value;
+    localStorage.setItem("mme.industry", state.industry);
+    const label = (state.applications.find((a) => a.code === state.industry) || {}).label;
+    $("#statusText").textContent = label ? `应用：${label}` : "本地知识库";
+  };
 }
 
 function renderChips() {}
@@ -315,6 +337,7 @@ async function refreshCollections() {
     const res = await fetch("/api/bootstrap");
     const data = await res.json();
     if (data.collections) state.collections = data.collections;
+    if (data.applications) state.applications = data.applications.industries || [];
     renderNav();
     renderChips();
     setActive(state.active);
@@ -517,7 +540,12 @@ async function ask(question) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, collection: "catalog", product: state.active }),
+      body: JSON.stringify({
+        question: q,
+        collection: "catalog",
+        product: state.active,
+        industry: state.industry,
+      }),
       signal: state.controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
@@ -758,6 +786,7 @@ async function boot() {
     const res = await fetch("/api/bootstrap");
     const data = await res.json();
     state.collections = data.collections || [];
+    state.applications = (data.applications && data.applications.industries) || [];
   } catch (e) {
     state.collections = [{ name: "all", label: "全部产品", full: "离线", hint: "离线", count: 0 }];
   }
@@ -768,6 +797,8 @@ async function boot() {
 
   const saved = localStorage.getItem("mme.collection");
   if (saved && state.collections.some((c) => c.name === saved)) state.active = saved;
+  const savedApp = localStorage.getItem("mme.industry") || "";
+  if (savedApp && state.applications.some((a) => a.code === savedApp)) state.industry = savedApp;
 
   renderNav();
   renderChips();

@@ -2,6 +2,8 @@
 
 const resState = {
   product: "all",
+  industry: "all",
+  facets: null,
   sources: [],
   filter: "",
   selected: new Set(),
@@ -39,8 +41,11 @@ function switchView(view) {
 async function loadSources() {
   const meta = document.getElementById("resMeta");
   meta.textContent = "加载中…";
+  await ensureFacets();
   try {
-    const res = await fetch(`/api/library?product=${encodeURIComponent(resState.product)}`);
+    const params = new URLSearchParams({ product: resState.product });
+    if (resState.industry && resState.industry !== "all") params.set("industry", resState.industry);
+    const res = await fetch(`/api/library?${params.toString()}`);
     const data = await res.json();
     resState.sources = data.items || [];
     const alive = new Set(resState.sources.map(keyOf));
@@ -67,11 +72,41 @@ function renderSeg() {
   };
 }
 
+async function ensureFacets() {
+  if (resState.facets) return resState.facets;
+  try {
+    const res = await fetch("/api/applications");
+    const data = await res.json();
+    resState.facets = data.facets || {};
+  } catch (err) {
+    resState.facets = {};
+  }
+  renderResApp();
+  return resState.facets;
+}
+
+function renderResApp() {
+  const sel = document.getElementById("resApp");
+  if (!sel) return;
+  const list = (resState.facets && resState.facets.industries) || [];
+  sel.innerHTML =
+    `<option value="all">全部应用</option>` +
+    list
+      .map((a) => `<option value="${esc(a.label)}">${esc(a.label)} · ${a.count} 条</option>`)
+      .join("");
+  sel.value = resState.industry;
+  sel.onchange = () => {
+    resState.industry = sel.value;
+    loadSources();
+  };
+}
+
 function visibleSources() {
   const q = resState.filter.trim().toLowerCase();
   if (!q) return resState.sources;
   return resState.sources.filter((item) =>
-    [item.title, item.source, item.original_name, item.authors, item.publisher, item.patent_no, item.doi]
+    [item.title, item.source, item.original_name, item.authors, item.publisher, item.patent_no, item.doi,
+      item.product_name, item.industries, item.parts, item.media, item.certs, item.application_text]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(q))
   );
@@ -131,11 +166,12 @@ function renderResList() {
           const key = item.product_id || item.source;
           if (key !== current) {
             current = key;
+            const app = [item.industries, item.parts].filter(Boolean).join(" · ");
             rows.push(`<div class="res-group">
               <span class="g-name">${esc(item.product_name || "未关联产品")}</span>
               <span class="g-meta">${esc(item.supplier || "")}${
               item.supplier ? " · " : ""
-            }${counts.get(key)} 份文件</span>
+            }${esc(app)}${app ? " · " : ""}${counts.get(key)} 份文件</span>
             </div>`);
           }
           const index = list.indexOf(item);
@@ -239,6 +275,11 @@ function metaForm(item) {
     <label class="mfield wide"><span>标签（逗号分隔）</span><input id="mTags" value="${esc(
       (item.tags || []).join(", ")
     )}"></label>
+    <label class="mfield wide"><span>应用场景</span><input value="${esc(
+      [item.application_text, item.industries, item.parts]
+        .filter(Boolean)
+        .join(" · ")
+    )}" readonly></label>
     <div class="doc-meta-foot">
       <span class="meta-hint">原始文件：${esc(item.original_name || "")}</span>
       <button class="btn-ghost" type="button" id="metaRename"><span class="ico">${icon(
@@ -330,7 +371,7 @@ async function openDrawer(item) {
   document.getElementById("drawerTitle").textContent = item.title || item.source;
   document.getElementById("drawerSub").textContent = `${item.records || 0} 条记录 · ${labelOf(
     item.collection
-  )} · ${item.source}`;
+  )} · ${item.source}${item.industries ? ` · ${item.industries}` : ""}`;
 
   const open = document.getElementById("drawerOpen");
   if (open) {

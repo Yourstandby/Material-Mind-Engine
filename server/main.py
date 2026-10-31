@@ -15,11 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import auth, embeddings
+from core import applications
 from core import failures
 from core import vector_store as vs
 from core.config import env, status as config_status
 from core.query_engine import (
     CATALOG,
+    application_facets,
     build_sources,
     delete_source,
     doc_products,
@@ -57,6 +59,9 @@ class Ask(BaseModel):
     question: str
     collection: str = "catalog"
     product: str = "all"
+    industry: str = ""
+    part: str = ""
+    medium: str = ""
     top_k: int = 5
 
 
@@ -75,14 +80,21 @@ def bootstrap():
     return {
         "collections": products,
         "products": products,
+        "applications": application_facets(),
         "catalog": CATALOG,
         "config": config_status(),
     }
 
 
 @app.get("/api/products")
-def api_products():
-    return {"items": product_stats()}
+def api_products(industry: str = "", part: str = "", medium: str = ""):
+    return {"items": product_stats(industry=industry, part=part, medium=medium)}
+
+
+@app.get("/api/applications")
+def api_applications():
+    """应用分布：行业 / 部件 / 介质 / 认证（供筛选栏与统计）。"""
+    return {"facets": application_facets()}
 
 
 @app.get("/api/health")
@@ -172,7 +184,13 @@ def chat(body: Ask, request: Request):
         top_score = None
         try:
             docs, metas, scores = retrieve_scored(
-                question, body.collection, body.top_k, product=body.product
+                question,
+                body.collection,
+                body.top_k,
+                product=body.product,
+                industry=body.industry,
+                part=body.part,
+                medium=body.medium,
             )
             if not docs:
                 _capture_failure(question, "", [], None, username)
@@ -306,13 +324,21 @@ def _library_item(doc: dict, products: dict) -> dict:
 
 
 @app.get("/api/library")
-def api_library(collection: str = "all", product: str = "all"):
+def api_library(
+    collection: str = "all",
+    product: str = "all",
+    industry: str = "",
+    part: str = "",
+    medium: str = "",
+):
     products = doc_products()
     items = [_library_item(doc, products) for doc in repo.all_docs()]
     if product and product != "all":
         items = [item for item in items if item.get("product_id") == product]
     if collection != "all":
         items = [item for item in items if item["collection"] == collection]
+    if any(x and x != "all" for x in (industry, part, medium)):
+        items = [item for item in items if applications.matches(item, industry, part, medium)]
     return {"items": items}
 
 

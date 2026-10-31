@@ -9,6 +9,7 @@ from pathlib import Path
 import chromadb
 
 from core import embeddings
+from core import applications
 from core import vector_store as vs
 from core.config import env
 from core.llm import client as llm_client, model_name
@@ -56,6 +57,11 @@ FIELDS = [
     ("supplier", "供应商"),
     ("composition", "组成"),
     ("material", "材质"),
+    ("application", "应用场景"),
+    ("industries", "行业"),
+    ("parts", "部件"),
+    ("media", "介质"),
+    ("certs", "认证"),
     ("temp_range", "温度范围"),
     ("cs", "压缩永久变形"),
     ("chem_resistance", "耐化学性"),
@@ -113,6 +119,11 @@ def expand_query(question: str) -> str:
     for alias, expansion in ALIASES:
         if alias in question:
             query = f"{query} {expansion}"
+    # 应用向提问补全英文/同义写法，英语资料也能命中
+    low = question.lower()
+    for alias, expansion in applications.QUERY_ALIASES:
+        if alias in low:
+            query = f"{query} {expansion}"
     if any(keyword in question for keyword in TEMP_KEYWORDS):
         query = f"{query} {TEMP_EXPANSION}"
     return query
@@ -145,7 +156,15 @@ def product_options() -> list:
         }
     ]
     for item in sorted(items, key=lambda p: p["product_name"]):
-        detail = " · ".join(part for part in (item["supplier"], item["material_label"]) if part)
+        detail = " · ".join(
+            part
+            for part in (
+                item["supplier"],
+                "、".join(item.get("industries") or []) or None,
+                item["material_label"],
+            )
+            if part
+        )
         out.append(
             {
                 "name": item["product_id"],
@@ -228,6 +247,9 @@ def retrieve_scored(
     top_k: int = 5,
     material: str | None = None,
     product: str | None = None,
+    industry: str | None = None,
+    part: str | None = None,
+    medium: str | None = None,
 ):
     """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。"""
     # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
@@ -250,6 +272,11 @@ def retrieve_scored(
         fetch = max(10, top_k * 2)
     else:
         fetch = max(top_k, top_k * 2)  # 为去重留余量
+
+    # 应用筛选在候选集上按元数据过滤（Chroma 对 "|" 拼接的多值字段没有 contains）
+    app_filter = any(x and x not in ("all", "") for x in (industry, part, medium))
+    if app_filter:
+        fetch = max(fetch, min(60, top_k * 8))
 
     # 问题点名厂商（NOK / 索尔维 …）时按供应商过滤，不能用别家的数据顶替
     suppliers = named_suppliers(question)
@@ -280,6 +307,11 @@ def retrieve_scored(
         score = round(1 / (1 + float(distance)), 4) if distance is not None else None
         rows.append((doc, meta, score, index))
 
+    if app_filter:
+        rows = [
+            row for row in rows
+            if applications.matches(row[1] or {}, industry or "", part or "", medium or "")
+        ]
     rows = _diversify_rows(_rerank_rows(question, rows), top_k)
     return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
 
@@ -290,8 +322,13 @@ def retrieve(
     top_k: int = 5,
     material: str | None = None,
     product: str | None = None,
+    industry: str | None = None,
+    part: str | None = None,
+    medium: str | None = None,
 ):
-    docs, metas, _scores = retrieve_scored(question, collection, top_k, material, product)
+    docs, metas, _scores = retrieve_scored(
+        question, collection, top_k, material, product, industry, part, medium
+    )
     return docs, metas
 
 
@@ -302,6 +339,9 @@ def format_context(docs, metas) -> str:
         meta = meta or {}
         product = meta.get("grade") or meta.get("product_name") or meta.get("supplier") or "unknown"
         material = meta.get("material_label") or meta.get("material") or ""
+        scope = " / ".join(
+            value for value in (meta.get("industries"), meta.get("parts"), meta.get("certs")) if value
+        )
         # 文档里存的是英文字段名（cs / chem_resistance），换成中文再喂给模型，
         # 否则模型容易把「耐化学性 280」说成「压缩永久变形 280」
         body = []
@@ -315,7 +355,9 @@ def format_context(docs, metas) -> str:
             if label == "测试温度" and re.fullmatch(r"-?\d+(\.\d+)?", value.strip()):
                 value = f"{value.strip()}°C"
             body.append(f"{label}: {localize(value)}")
-        lines.append(f"[{i}] {product} | {material} | {meta.get('source') or '—'}\n" + "\n".join(body))
+        lines.append(
+            f"[{i}] {product} | {material} | {scope} | {meta.get('source') or '—'}\n" + "\n".join(body)
+        )
     return "\n\n".join(lines)
 
 
@@ -336,6 +378,11 @@ def build_sources(metas) -> list:
                 "product_id": meta.get("product_id") or "",
                 "material": meta.get("material") or "",
                 "material_label": meta.get("material_label") or "",
+                "application": meta.get("application_text") or "",
+                "industries": meta.get("industries") or "",
+                "parts": meta.get("parts") or "",
+                "media": meta.get("media") or "",
+                "certs": meta.get("certs") or "",
                 "supplier": meta.get("supplier") or "",
                 "confidence": meta.get("confidence"),
                 "doc_id": meta.get("doc_id") or "",
@@ -525,6 +572,9 @@ def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> li
                 "product_name": meta.get("product_name") or "",
                 "material": meta.get("material") or "",
                 "supplier": meta.get("supplier") or "",
+                "application": meta.get("application_text") or "",
+                "industries": meta.get("industries") or "",
+                "parts": meta.get("parts") or "",
                 "source": meta.get("source") or "",
                 "collection": collection,
                 "snippet": (doc or "")[:240],
@@ -533,8 +583,9 @@ def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> li
     return hits
 
 
-def product_stats(material: str | None = None) -> list:
-    """按产品聚合：一个产品 = 供应商 + 牌号，材质是它的属性。"""
+def product_stats(material: str | None = None, industry: str | None = None,
+                  part: str | None = None, medium: str | None = None) -> list:
+    """按产品聚合：一个产品 = 供应商 + 牌号；应用（行业/部件/介质）是筛选主维度。"""
     try:
         store = _client().get_or_create_collection(CATALOG)
         data = store.get(include=["metadatas"])
@@ -545,6 +596,8 @@ def product_stats(material: str | None = None) -> list:
     for meta in data.get("metadatas") or []:
         meta = meta or {}
         if material and material not in ("all", "") and meta.get("material") != material:
+            continue
+        if not applications.matches(meta, industry or "", part or "", medium or ""):
             continue
         pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
         group = groups.setdefault(
@@ -558,6 +611,11 @@ def product_stats(material: str | None = None) -> list:
                 "records": 0,
                 "grades": set(),
                 "sources": set(),
+                "industries": set(),
+                "parts": set(),
+                "media": set(),
+                "certs": set(),
+                "applications": set(),
             },
         )
         group["records"] += 1
@@ -566,14 +624,30 @@ def product_stats(material: str | None = None) -> list:
         base = str(meta.get("source") or "").split(" p.")[0]
         if base:
             group["sources"].add(base)
+        for field in ("industries", "parts", "media", "certs"):
+            group[field].update(applications.values(meta, field))
+        if meta.get("application_text"):
+            group["applications"].add(str(meta["application_text"]))
 
     out = []
     for group in groups.values():
         group["grades"] = sorted(group["grades"])[:4]
         group["sources"] = sorted(group["sources"])
         group["documents"] = len(group["sources"])
+        group["applications"] = sorted(group["applications"])[:6]
+        for field in ("industries", "parts", "media", "certs"):
+            group[field] = sorted(group[field])
         out.append(group)
     return sorted(out, key=lambda g: (-g["records"], g["product_name"]))
+
+
+def application_facets() -> dict:
+    """全库应用分布（行业/部件/介质/认证），供前端筛选栏。"""
+    try:
+        data = _client().get_or_create_collection(CATALOG).get(include=["metadatas"])
+    except Exception:
+        return applications.facets([])
+    return applications.facets(data.get("metadatas") or [])
 
 
 def doc_products() -> dict:
@@ -586,12 +660,29 @@ def doc_products() -> dict:
     for meta in data.get("metadatas") or []:
         meta = meta or {}
         did = meta.get("doc_id")
-        if not did or did in mapping:
+        if not did:
             continue
-        mapping[did] = {
-            "product_id": meta.get("product_id") or "",
-            "product_name": meta.get("product_name") or "",
-            "material": meta.get("material") or "",
-            "material_label": meta.get("material_label") or "",
-        }
+        if did not in mapping:
+            mapping[did] = {
+                "product_id": meta.get("product_id") or "",
+                "product_name": meta.get("product_name") or "",
+                "material": meta.get("material") or "",
+                "material_label": meta.get("material_label") or "",
+                "industries": "",
+                "parts": "",
+                "media": "",
+                "certs": "",
+                "application_text": "",
+            }
+        item = mapping[did]
+        if not item["product_name"] and meta.get("product_name"):
+            item["product_name"] = meta.get("product_name")
+            item["product_id"] = meta.get("product_id") or item["product_id"]
+        if not item["application_text"] and meta.get("application_text"):
+            item["application_text"] = str(meta["application_text"])
+        # 一份资料里不同页/不同表的行业可能不同，合并后用于资料库筛选
+        for field in ("industries", "parts", "media", "certs"):
+            merged = dict.fromkeys(applications.values(item, field))
+            merged.update(dict.fromkeys(applications.values(meta, field)))
+            item[field] = "|".join(merged)
     return mapping

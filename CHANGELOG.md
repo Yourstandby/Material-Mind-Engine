@@ -6,6 +6,9 @@
 
 ### 新增
 
+- 应用维度（以「用在哪」为主）：行业 / 部件 / 介质 / 认证 四类标签，随抽取自动归一化并写入向量元数据；问答与资料库可按应用筛选，英语资料通过查询扩展命中
+- `core/applications.py`：应用分类法、别名匹配、元数据打包与分布统计；新增 `GET /api/applications`
+- `scripts/backfill_applications.py`：存量数据回填应用字段，`--reembed` 可同步重算向量
 - 扫描件 OCR：无文本层页面自动渲染并调用 OCR 服务，支持网关鉴权与页数上限
 - `ocr_service/`：RapidOCR + FastAPI 服务，依赖独立在 `requirements-ocr.txt`
 - CI：GitHub Actions 跑语法检查与单元测试（`tests/` 增至 23 项）
