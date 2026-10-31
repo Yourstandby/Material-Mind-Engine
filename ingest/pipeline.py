@@ -18,7 +18,7 @@ from core.config import env
 from core.query_engine import FIELDS as FIELD_LABELS
 from ingest import metadata, repo
 from ingest.chunk import split
-from ingest.extract import extract
+from ingest.extract import extract_all
 from ingest.parse import parse
 
 MIN_CONFIDENCE = 0.6
@@ -36,6 +36,56 @@ def _log(message: str) -> None:
 
 
 FIELD_LABELS = dict(FIELD_LABELS)
+
+
+def _passage_collection(collection: str) -> str:
+    """原文片段单独存，不能混进问答主集合，否则检索会把叙述和数值当成同一类证据。"""
+    return f"{collection}__passages"
+
+
+def _dedupe_passages(passages: list[dict]) -> list[dict]:
+    seen, out = set(), []
+    for item in passages:
+        text = (item.get("text") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(item)
+    return out
+
+
+def _store_passages(collection: str, passages: list[dict], doc_id: str, material_hint: str = "") -> int:
+    """把叙述性原文片段写进独立集合。失败不影响主流程（记录已经入库）。"""
+    items = _dedupe_passages(passages)
+    if not items:
+        return 0
+    try:
+        client = _client()
+        model = embeddings.config()["model"]
+        store = client.get_or_create_collection(
+            _passage_collection(collection), metadata={"embedding_model": model}
+        )
+        ids = [hashlib.md5(f"{doc_id}:passage:{i}".encode()).hexdigest() for i in range(len(items))]
+        documents = [item["text"] for item in items]
+        metadatas = [
+            {
+                "doc_type": "passage",
+                "kind": item.get("kind") or "其他",
+                "source": item.get("source") or "",
+                "page": int(item.get("page") or 0),
+                "doc_id": doc_id,
+                "confidence": float(item.get("confidence") or 0.5),
+                "material": material_hint or "",
+            }
+            for item in items
+        ]
+        store.upsert(
+            ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings.embed(documents)
+        )
+        return len(items)
+    except Exception as exc:  # noqa: BLE001 - 片段入库失败不应丢掉已抽到的记录
+        _log(f"  原文片段入库失败: {type(exc).__name__}: {exc}")
+        return 0
 
 
 def serialize(record: dict) -> str:
@@ -233,12 +283,13 @@ def ingest(
     yield {"type": "stage", "stage": "extract", "chunks": len(chunks)}
 
     records: list[dict] = []
+    passages: list[dict] = []
     failed = 0
     last_error = ""
     for index, chunk in enumerate(chunks, start=1):
         label = f"{filename} p.{chunk['page']}"
         try:
-            found = extract(chunk["text"], label)
+            found, found_passages = extract_all(chunk["text"], label)
         except Exception as exc:
             failed += 1
             last_error = f"{type(exc).__name__}: {exc}"
@@ -253,15 +304,18 @@ def ingest(
                 record["supplier"] = doc_supplier
             record.update(applications.enrich(record))
         records.extend(found)
+        for passage in found_passages:
+            passage["page"] = chunk["page"]
+        passages.extend(found_passages)
         yield {"type": "progress", "done": index, "total": len(chunks), "found": len(records)}
 
-    _log(f"  抽取 {len(records)} 条（失败块 {failed}/{len(chunks)}）")
+    _log(f"  抽取 {len(records)} 条记录 / {len(passages)} 条片段（失败块 {failed}/{len(chunks)}）")
 
-    if not records:
+    if not records and not passages:
         if failed == len(chunks):
             message = f"全部 {len(chunks)} 块抽取失败：{last_error}"
         else:
-            message = f"读到了 {chars} 字，但没有可结构化的性能数据（多为描述性文字）"
+            message = f"读到了 {chars} 字，但没有可结构化的性能数据，也没有可引用的叙述片段"
         yield {"type": "done", "added": 0, "skipped": 0, "quarantined": 0, "message": message}
         return
 
@@ -325,22 +379,27 @@ def ingest(
         found_ids = set()
 
     try:
-        vectors = embeddings.embed(documents)
+        vectors = embeddings.embed(documents) if documents else []
     except Exception as exc:
         yield {"type": "error", "message": f"向量化失败: {exc}"}
         return
 
-    store.upsert(
-        ids=ids,
-        documents=documents,
-        metadatas=[_meta(r, did, material_hint) for r in keep],
-        embeddings=vectors,
-    )
+    if documents:
+        store.upsert(
+            ids=ids,
+            documents=documents,
+            metadatas=[_meta(r, did, material_hint) for r in keep],
+            embeddings=vectors,
+        )
     if not known:  # 旧库没有元数据时补写，防止查询回退到默认嵌入
         try:
             store.modify(metadata={"embedding_model": model})
         except Exception:
             pass
+
+    saved_passages = _store_passages(collection, passages, did, material_hint)
+    if saved_passages:
+        _log(f"  原文片段入库 {saved_passages} 条 → {_passage_collection(collection)}")
     # 归属文件夹：投喂时指定优先，否则按资料的主材质自动归入
     target_folder = folder_id if folder_id in repo.folder_map() else ""
     if not target_folder:
@@ -375,6 +434,7 @@ def ingest(
         "quarantined": quarantined,
         "duplicates": duplicates,
         "total": len(keep),
+        "passages": saved_passages,
     }
 
 
