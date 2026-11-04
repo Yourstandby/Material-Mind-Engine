@@ -51,6 +51,34 @@ def _pdfium_doc(data: bytes):
     return pdfium.PdfDocument(io.BytesIO(data))
 
 
+def _is_pdf(data: bytes) -> bool:
+    """看文件头而不是后缀：.crx 这类伪装后缀里装的常常就是 PDF。"""
+    return b"%PDF" in data[:1024]
+
+
+def _ocrcache_doc(data: bytes, name: str) -> dict | None:
+    """预处理（scripts/pdf_ocr.py）跑完的整本 OCR 文本；有就直接用，不再碰 OCR 服务。"""
+    from ingest import ocrcache
+
+    pages = ocrcache.load(ocrcache.key(data))
+    if not pages:
+        return None
+    items = [
+        {
+            "page": number,
+            "text": text,
+            "layout": "table" if text.lstrip().startswith("|") else "text",
+        }
+        for number, text in sorted(pages.items())
+        if text.strip()
+    ]
+    warnings = [f"使用离线 OCR 文本层（{len(items)} 页，logs/pdf_ocr_cache）"]
+    empty = len(pages) - len(items)
+    if empty:
+        warnings.append(f"{empty} 页 OCR 后仍无文字，已跳过")
+    return {"file": name, "pages": items, "warnings": warnings}
+
+
 def _table_text(document, index: int, text: str) -> tuple[str, bool]:
     """有文本层的页：只有当版面能还原出表格时才替换成 Markdown 表格。
 
@@ -273,7 +301,12 @@ def _html(data: bytes, name: str):
 
 def parse(filename: str, data: bytes) -> dict:
     ext = Path(filename).suffix.lower()
-    if ext == ".pdf":
+    # 后缀伪装（.crx 实为 PDF，绕 DLP 时常见）：按文件头识别；文本与 Office 格式仍按后缀走
+    disguised = ext not in TEXTUAL and ext not in (".docx", ".xlsx", ".xlsm", ".html", ".htm")
+    if ext == ".pdf" or (disguised and _is_pdf(data)):
+        cached = _ocrcache_doc(data, filename)
+        if cached is not None:
+            return cached
         return _pdf(data, filename)
     if ext == ".docx":
         return _docx(data, filename)
