@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 
 import chromadb
@@ -24,6 +25,44 @@ from ingest.parse import parse
 MIN_CONFIDENCE = 0.6
 QUARANTINE = Path("quarantine.jsonl")
 LOG = Path("ingest.log")
+# 断点续跑的块级缓存：每抽完一块追加一行，进程被杀/取消后重新投喂直接复用
+CACHE_DIR = Path("logs") / "ingest_cache"
+CACHE_VERSION = "v1"
+
+
+def _chunk_key(chunk: dict) -> str:
+    raw = f"{CACHE_VERSION}\x00{chunk.get('head') or ''}\x00{chunk['text']}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _load_cache(doc_id: str) -> dict[str, dict]:
+    """读回本文档已抽取的块。键只看块内容，改并发/顺序都不影响命中。"""
+    cache: dict[str, dict] = {}
+    try:
+        with (CACHE_DIR / f"{doc_id}.jsonl").open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    item = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(item, dict) and item.get("key"):
+                    cache[item["key"]] = item
+    except OSError:
+        pass
+    return cache
+
+
+def _cache_put(doc_id: str, key: str, records: list[dict], passages: list[dict]) -> None:
+    """追加一行；写不进去只丢缓存，不影响入库。"""
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {"key": key, "records": records, "passages": passages}, ensure_ascii=False
+        )
+        with (CACHE_DIR / f"{doc_id}.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
 
 
 def _log(message: str) -> None:
@@ -266,6 +305,8 @@ def ingest(
         yield {"type": "error", "message": "未配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL，无法入库"}
         return
 
+    _reap_cache()
+
     yield {"type": "stage", "stage": "parse", "file": filename}
     try:
         doc = parse(filename, data)
@@ -302,45 +343,98 @@ def ingest(
         return
 
     _log(f"  切分 {len(chunks)} 块")
-    yield {"type": "stage", "stage": "extract", "chunks": len(chunks)}
+    workers = max(1, min(8, int(env("INGEST_CONCURRENCY", "2") or 2)))
+    yield {"type": "stage", "stage": "extract", "chunks": len(chunks), "workers": workers}
 
-    records: list[dict] = []
-    passages: list[dict] = []
+    # 抽取是最慢的一段（一块一次 LLM 调用，实测 ≈13s）。按块并发 + 块级缓存，
+    # 中断后重投只补没抽过的块，已抽过的直接复用，不再白烧 LLM。
+    cache = _load_cache(did)
+    results: dict[int, tuple[list[dict], list[dict]]] = {}
+    for index, chunk in enumerate(chunks, start=1):
+        hit = cache.get(_chunk_key(chunk))
+        if hit is not None:
+            results[index] = (list(hit.get("records") or []), list(hit.get("passages") or []))
+    reused = len(results)
+    if reused:
+        _log(f"  断点续跑：复用已抽取的 {reused}/{len(chunks)} 块，不重复调 LLM")
+        yield {"type": "warn", "message": f"断点续跑：复用已抽取的 {reused}/{len(chunks)} 块"}
+
     failed = 0
     last_error = ""
     cancelled = False
-    for index, chunk in enumerate(chunks, start=1):
-        if should_cancel is not None:
-            try:
-                stopped = bool(should_cancel())
-            except Exception:  # noqa: BLE001 - 取消标记读不到就继续，别因此中断入库
-                stopped = False
-            if stopped:
-                cancelled = True
-                _log(f"  第 {index}/{len(chunks)} 块前收到取消，已抽 {len(records)} 条照常入库")
-                yield {"type": "warn", "message": f"已取消：已完成 {index - 1}/{len(chunks)} 块"}
-                break
-        label = f"{filename} p.{chunk['page']}"
+    done = reused
+    found = sum(len(chunk_records) for chunk_records, _ in results.values())
+    if reused:
+        yield {"type": "progress", "done": done, "total": len(chunks), "found": found}
+
+    def _stopped() -> bool:
+        if should_cancel is None:
+            return False
         try:
-            found, found_passages = extract_all(chunk["text"], label)
-        except Exception as exc:
-            failed += 1
-            last_error = f"{type(exc).__name__}: {exc}"
-            _log(f"  第 {index}/{len(chunks)} 块抽取失败: {last_error}")
-            yield {"type": "warn", "message": f"第 {index}/{len(chunks)} 块抽取失败: {exc}"}
-            continue
-        hint = page_material.get(chunk["page"], "")
-        for record in found:
+            return bool(should_cancel())
+        except Exception:  # noqa: BLE001 - 取消标记读不到就继续，别因此中断入库
+            return False
+
+    queue = [(index, chunk) for index, chunk in enumerate(chunks, start=1) if index not in results]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="oxr-extract") as pool:
+        inflight: dict = {}
+        while queue or inflight:
+            if not _stopped():
+                while queue and len(inflight) < workers:
+                    index, chunk = queue.pop(0)
+                    inflight[
+                        pool.submit(
+                            extract_all,
+                            chunk["text"],
+                            f"{filename} p.{chunk['page']}",
+                            chunk.get("head") or "",
+                        )
+                    ] = (index, chunk)
+            elif not cancelled:
+                cancelled = True
+                _log(f"  收到取消，已抽 {done}/{len(chunks)} 块，队列里剩下的不再提交")
+                yield {
+                    "type": "warn",
+                    "message": f"已取消：已完成 {done}/{len(chunks)} 块，在途的块跑完后入库",
+                }
+            if not inflight:
+                break
+            finished, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
+            for future in finished:
+                index, chunk = inflight.pop(future)
+                try:
+                    chunk_records, chunk_passages = future.result()
+                except Exception as exc:
+                    failed += 1
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    done += 1
+                    _log(f"  第 {index}/{len(chunks)} 块抽取失败: {last_error}")
+                    yield {"type": "warn", "message": f"第 {index}/{len(chunks)} 块抽取失败: {exc}"}
+                    yield {"type": "progress", "done": done, "total": len(chunks), "found": found}
+                    continue
+                results[index] = (chunk_records, chunk_passages)
+                _cache_put(did, _chunk_key(chunk), chunk_records, chunk_passages)
+                done += 1
+                found += len(chunk_records)
+                yield {"type": "progress", "done": done, "total": len(chunks), "found": found}
+
+    # 按块序装配：并发不改变记录顺序，同一份文件重投时生成的 ID 才稳定
+    records: list[dict] = []
+    passages: list[dict] = []
+    for index in sorted(results):
+        chunk_records, chunk_passages = results[index]
+        page = chunks[index - 1]["page"]
+        hint = page_material.get(page, "")
+        for record in chunk_records:
             if not record.get("material") and hint:
                 record["material"] = hint
             if not record.get("supplier") and doc_supplier:
                 record["supplier"] = doc_supplier
             record.update(applications.enrich(record))
-        records.extend(found)
-        for passage in found_passages:
-            passage["page"] = chunk["page"]
-        passages.extend(found_passages)
-        yield {"type": "progress", "done": index, "total": len(chunks), "found": len(records)}
+            records.append(record)
+        for passage in chunk_passages:
+            passage["page"] = page
+            passages.append(passage)
 
     _log(f"  抽取 {len(records)} 条记录 / {len(passages)} 条片段（失败块 {failed}/{len(chunks)}）")
 
@@ -351,7 +445,7 @@ def ingest(
             "skipped": 0,
             "quarantined": 0,
             "cancelled": True,
-            "message": "已取消，尚未抽到可用数据；重新投喂会从整份文件重跑",
+            "message": "已取消，尚未抽到可用数据；重新投喂会复用已抽过的块",
         }
         return
 
@@ -495,11 +589,23 @@ def ingest(
         "passages": saved_passages,
         "cancelled": cancelled,
         "message": (
-            f"已取消：已入库 {len(keep) - len(found_ids)} 条，重新投喂同一文件会跳过已入库的记录"
+            f"已取消：已入库 {len(keep) - len(found_ids)} 条，重新投喂同一文件会跳过已入库的记录",
+            ""
             if cancelled
-            else ""
+            else "",
         ),
     }
+
+
+def _reap_cache(days: int = 14) -> None:
+    """清掉两周没动过的块级缓存，别让 logs/ingest_cache 无限长。"""
+    edge = time.time() - days * 86400
+    try:
+        for path in CACHE_DIR.glob("*.jsonl"):
+            if path.stat().st_mtime < edge:
+                path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def main():

@@ -3,6 +3,7 @@
 环境变量: EMBEDDING_BASE_URL / EMBEDDING_API_KEY / EMBEDDING_MODEL / EMBEDDING_DIM
 """
 
+import random
 import time
 
 from core.config import env, mask
@@ -47,15 +48,20 @@ def embed(texts: list[str]) -> list[list[float]]:
 
     for start in range(0, len(texts), BATCH):
         batch = [t[:4000] for t in texts[start : start + BATCH]]
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 res = client.embeddings.create(model=cfg["model"], input=batch)
                 vectors.extend(item.embedding for item in sorted(res.data, key=lambda d: d.index))
                 break
-            except Exception:
-                if attempt == 2:
+            except Exception as exc:
+                if attempt == 3:
                     raise
-                time.sleep(1.5 * (attempt + 1))
+                # 429「在途请求超限」和 5xx 都是等一下就好；退避拉到秒级，别拿 1.5s 硬碰
+                status = getattr(exc, "status_code", None)
+                transient = status in (408, 409, 425, 429, 500, 502, 503, 504) or "并发超限" in str(exc)
+                if not transient:
+                    raise
+                time.sleep(min(30.0, 2.0 * (2 ** attempt)) + random.uniform(0, 0.4))
 
     if cfg["dim"] and vectors and len(vectors[0]) != cfg["dim"]:
         raise RuntimeError(f"embedding 维度 {len(vectors[0])} 与 EMBEDDING_DIM={cfg['dim']} 不一致")
