@@ -941,6 +941,19 @@ async function guessUser() {
   }
 }
 
+/* 未命中看板入口：只给管理员显示，普通成员看不到这个按钮 */
+async function revealAdminEntry() {
+  const link = document.getElementById("admBtn");
+  if (!link) return;
+  try {
+    const data = await (await fetch("/api/auth/me")).json();
+    link.hidden = !(data.user && data.user.role === "admin");
+  } catch (e) {
+    link.hidden = true;
+  }
+}
+revealAdminEntry();
+
 async function loadAcctUsers() {
   const box = document.getElementById("acctAdmin");
   const select = document.getElementById("acctUserSel");
