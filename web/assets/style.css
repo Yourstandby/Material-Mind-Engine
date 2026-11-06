@@ -968,3 +968,24 @@ a.btn-ghost[hidden] { display: none; }
 }
 .verdicts button:hover { border-color: var(--accent); color: var(--accent); }
 .verdict-done { font-size: 11.5px; color: var(--muted); }
+
+/* ───────── 未命中上报 ───────── */
+.miss { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.miss button {
+  font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--paper);
+  border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 10px; cursor: pointer;
+  transition: border-color 0.14s, color 0.14s;
+}
+.miss button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.miss button:disabled { cursor: default; opacity: 0.55; }
+.miss-note { font-size: 11.5px; color: var(--muted); }
+
+/* ───────── 后台：未命中清单 ───────── */
+.acct-miss-list { display: grid; gap: 5px; max-height: 190px; overflow: auto; }
+.acct-miss { display: flex; gap: 8px; font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.acct-miss-n {
+  flex: none; min-width: 18px; text-align: right; font-family: var(--mono);
+  font-size: 10px; color: var(--accent); padding-top: 2px;
+}
+.acct-miss-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-miss-want { font-size: 11px; color: var(--muted); margin-top: 2px; }

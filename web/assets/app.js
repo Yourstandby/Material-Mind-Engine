@@ -344,6 +344,40 @@ function showError(body, message, onRetry) {
   body.appendChild(box);
 }
 
+/* 库里没有这个资料时，让用户一句话上报需求（合并计数，后台能看到谁在等） */
+function renderMissReport(body, question) {
+  if (body.querySelector(".miss")) return;
+  const box = document.createElement("div");
+  box.className = "miss";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "需要这个资料，催一下";
+  const note = document.createElement("span");
+  note.className = "miss-note";
+  box.appendChild(btn);
+  box.appendChild(note);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    note.textContent = "上报中…";
+    try {
+      const res = await fetch("/api/failures", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, trigger: "manual_no_hit" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "上报失败");
+      note.textContent =
+        (data.hits || 1) > 1 ? `已记录，共 ${data.hits} 人在等这份资料` : "已记录，会按需补充资料";
+      btn.remove();
+    } catch (err) {
+      btn.disabled = false;
+      note.textContent = err.message;
+    }
+  });
+  body.appendChild(box);
+}
+
 /* ───────── 投喂资料 ───────── */
 
 async function refreshCollections() {
@@ -546,6 +580,7 @@ async function ask(question) {
         t.turn.remove();
         ask(q);
       });
+      if (evt.miss) renderMissReport(t.body, q);
       scrollToBottom();
     }
   };
@@ -920,6 +955,36 @@ async function loadAcctUsers() {
     select.innerHTML = (data.items || [])
       .map((u) => `<option value="${u.id}">${esc(u.username)}（${u.role === "admin" ? "管理员" : "成员"}）</option>`)
       .join("");
+    box.hidden = false;
+    loadAcctMisses();
+  } catch (e) {
+    box.hidden = true;
+  }
+}
+
+async function loadAcctMisses() {
+  const box = document.getElementById("acctMisses");
+  const list = document.getElementById("acctMissList");
+  if (!box || !list) return;
+  try {
+    const data = await (await fetch("/api/failures/misses?limit=50")).json();
+    const items = data.items || [];
+    if (!items.length) {
+      list.innerHTML = `<div class="acct-note">暂无未命中的问题</div>`;
+      box.hidden = false;
+      return;
+    }
+    const rows = items
+      .slice(0, 10)
+      .map(
+        (it) =>
+          `<div class="acct-miss"><span class="acct-miss-n">${it.hits}</span>` +
+          `<span class="acct-miss-q">${esc(it.question)}</span></div>`
+      )
+      .join("");
+    const wanted = (data.wanted || []).slice(0, 8).map((w) => esc(w.word));
+    list.innerHTML =
+      rows + (wanted.length ? `<div class="acct-miss-want">待补：${wanted.join(" · ")}</div>` : "");
     box.hidden = false;
   } catch (e) {
     box.hidden = true;

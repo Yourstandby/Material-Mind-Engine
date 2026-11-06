@@ -268,14 +268,19 @@ def chat(body: Ask, request: Request):
                 medium=body.medium,
             )
             if not docs:
-                _capture_failure(question, "", [], None, username)
                 names = named_suppliers(question)
                 message = (
                     f"库里没有 {names[0]} 的资料，别家厂商的产品不能拿来代替"
                     if names
                     else "该知识库未检索到相关数据，换个问法或换库试试"
                 )
-                yield sse({"type": "error", "message": message})
+                # 自动落库：未命中本身就是「该补什么资料」的信号，不用等用户点
+                try:
+                    failures.record_miss(question, username, trigger="no_hit")
+                except Exception as exc:  # noqa: BLE001 - 记录失败不能影响问答
+                    log.warning("record miss failed: %s", exc)
+                _capture_failure(question, "", [], None, username)
+                yield sse({"type": "error", "message": message, "miss": True})
                 yield sse({"type": "done"})
                 return
             sources = [str((meta or {}).get("source") or "") for meta in metas]
@@ -311,16 +316,22 @@ class FeedbackIn(BaseModel):
     answer: str = ""
     verdict: str | None = None
     expected: str | None = None
+    trigger: str = ""
 
 
 @app.post("/api/failures")
 def api_failure(body: FeedbackIn, request: Request):
     user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
+    username = str(user.get("username") or "")
+    # 用户点「需要这个资料」：走未命中通道，同一问题合并计数，后台聚合成待补清单
+    if body.trigger in failures.MISS_TRIGGERS:
+        result = failures.record_miss(body.question, username, trigger="manual_no_hit")
+        return result
     fid = failures.record(
         question=body.question,
         answer=body.answer,
-        username=str(user.get("username") or ""),
-        trigger="manual",
+        username=username,
+        trigger=body.trigger or "manual",
         verdict=body.verdict,
         expected=body.expected,
     )
@@ -331,6 +342,49 @@ def api_failure(body: FeedbackIn, request: Request):
 def api_failures(request: Request, status: str = "open", limit: int = 100):
     _require_admin(request)
     return {"items": failures.list_items(status, limit), "stats": failures.stats()}
+
+
+GRADE_RE = re.compile(r"(?<![a-z0-9])([A-Z][A-Za-z0-9]*[-\s]?\d[A-Za-z0-9\-.]*)")
+
+
+def _miss_wanted(items: list[dict], limit: int = 30) -> list[dict]:
+    """把未命中问题里的厂商 / 牌号词抽出来，聚合成「该补哪些资料」的清单。"""
+    buckets: dict[str, dict] = {}
+    for item in items:
+        question = item.get("question") or ""
+        keys: list[tuple[str, str]] = [("supplier", name) for name in named_suppliers(question)]
+        keys += [("grade", m.group(1).strip()) for m in GRADE_RE.finditer(question)]
+        seen = set()
+        for kind, word in keys:
+            token = (kind, word.lower())
+            if token in seen:
+                continue
+            seen.add(token)
+            entry = buckets.setdefault(f"{kind}:{word.lower()}", {
+                "kind": kind,
+                "word": word,
+                "asks": 0,
+                "questions": [],
+                "last_ts": "",
+            })
+            entry["asks"] += int(item.get("hits") or 1)
+            if len(entry["questions"]) < 3:
+                entry["questions"].append(item.get("question") or "")
+            entry["last_ts"] = max(entry["last_ts"], item.get("last_ts") or "")
+    wanted = sorted(buckets.values(), key=lambda x: (-x["asks"], x["word"]))
+    return wanted[:limit]
+
+
+@app.get("/api/failures/misses")
+def api_failure_misses(request: Request, limit: int = 100, days: int = 365):
+    """后台看板：哪些问题库里没有资料 / 用户催了哪些资料。"""
+    _require_admin(request)
+    items = failures.misses(limit=limit, days=days)
+    return {
+        "items": items,
+        "wanted": _miss_wanted(items),
+        "stats": failures.stats(),
+    }
 
 
 @app.get("/api/sources")

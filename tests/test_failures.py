@@ -52,3 +52,44 @@ def test_stats_and_resolve(temp_db):
     stats = failures.stats()
     assert stats["status"].get("fixed") == 1
     assert stats["verdict"].get("A") == 1
+
+
+def test_record_miss_dedupes_by_question(temp_db):
+    first = failures.record_miss("CHEMRAZ 640 的密度？", username="a", trigger="no_hit")
+    second = failures.record_miss("chemraz 640 的密度", username="b", trigger="manual_no_hit")
+    assert first["id"] == second["id"]
+    assert second["hits"] == 2
+    assert second["users"] == 2
+    assert second["is_new"] is False
+
+    items = failures.misses()
+    assert len(items) == 1
+    assert items[0]["hits"] == 2
+    assert items[0]["users"] == ["a", "b"]
+    assert items[0]["trigger"] == "manual_no_hit"
+    # 未命中自动归为 C 类，且仍留在 open 队列里等补资料
+    assert failures.list_items("open")[0]["verdict"] == "C"
+
+
+def test_misses_hides_resolved(temp_db):
+    fid = failures.record_miss("P 959 的压缩永久变形？")["id"]
+    assert len(failures.misses()) == 1
+    failures.resolve(fid)
+    assert failures.misses() == []
+
+
+def test_stats_counts_misses(temp_db):
+    failures.record_miss("q1")
+    failures.record_miss("q1")
+    failures.record_miss("q2")
+    stats = failures.stats()
+    assert stats["misses"] == {"questions": 2, "asks": 3}
+
+
+def test_question_key_ignores_case_and_punctuation():
+    assert failures.question_key("CHEMRAZ 640 的密度？") == failures.question_key("chemraz 640 的密度")
+
+
+def test_record_miss_rejects_bad_trigger(temp_db):
+    with pytest.raises(ValueError):
+        failures.record_miss("q", trigger="refusal")
