@@ -3,6 +3,7 @@
 启动: uvicorn server.main:app --reload --port 8000
 """
 import json
+import logging
 import mimetypes
 import re
 import time
@@ -21,6 +22,7 @@ from core import vector_store as vs
 from core.config import env, status as config_status
 from core.query_engine import (
     CATALOG,
+    answer_by_products,
     application_facets,
     build_sources,
     delete_source,
@@ -38,6 +40,8 @@ from core.query_engine import (
     stream_tokens,
 )
 from ingest import repo
+
+log = logging.getLogger("mme.server")
 from ingest.pipeline import ingest as run_ingest
 from server import jobs
 
@@ -237,6 +241,23 @@ def chat(body: Ask, request: Request):
         sources: list[str] = []
         top_score = None
         try:
+            # 先解析目标产品：命中就出确定性对比表（数值来自库，不让模型复述），
+            # 一个产品都解析不出来才走 RAG + LLM 兜底。
+            direct = None
+            try:
+                direct = answer_by_products(question, body.collection, product=body.product)
+            except Exception as exc:  # noqa: BLE001 - 对比层出错退回原链路，别让问答整体失败
+                log.warning("product compare failed: %s", exc)
+            if direct:
+                yield sse({"type": "meta", "hits": len(direct["sources"]), "collection": body.collection,
+                           "mode": "table"})
+                yield sse({"type": "sources", "items": direct["sources"]})
+                text = direct["text"]
+                for at in range(0, len(text), 24):
+                    yield sse({"type": "token", "text": text[at:at + 24]})
+                yield sse({"type": "done", "mode": "table",
+                           "elapsed_ms": int((time.time() - started) * 1000)})
+                return
             docs, metas, scores = retrieve_scored(
                 question,
                 body.collection,

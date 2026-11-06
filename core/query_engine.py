@@ -573,6 +573,13 @@ def query(
     product: str | None = None,
 ) -> tuple:
     """一次性返回（向后兼容旧前端）。"""
+    direct = answer_by_products(question, collection, product=product)
+    if direct:
+        sources = [
+            f"[{item['index']}] {item['label']} | {item['source'] or '—'}"
+            for item in direct["sources"]
+        ]
+        return direct["text"], sources
     docs, metas = retrieve(question, collection, top_k, material, product)
     if not docs:
         return "未检索到相关数据", []
@@ -582,6 +589,413 @@ def query(
         for i, m in enumerate(metas, start=1)
     ]
     return answer, sources
+
+
+# ---- 目标产品解析 + 结构化对比（不经过 LLM） ----
+#
+# 回答前先把问题里的实体解析成库里的目标产品，优先级：牌号 > 供应商 > 材质 > 应用。
+# 命中就直接按产品出对比表：数值全部来自库，可复现、可核对引用；
+# 一个产品都解析不出来，才交给 retrieve + LLM 兜底。
+# 否则模型会把「FFKM 材质」这类属性问题误判成「库中没有该品牌的资料」。
+
+COLUMN_ORDER = (
+    "temp_range",
+    "cs",
+    "chem_resistance",
+    "test_medium",
+    "test_temp",
+    "test_duration",
+    "application",
+    "industry",
+    "part",
+    "medium",
+    "certifications",
+    "composition",
+    "material",
+)
+MAX_PRODUCTS = 12
+MAX_COLUMNS = 6
+MAX_CELL_VALUES = 3
+
+# 问题提到某类数据时，把它排到表格前几列（表格宽度有限）
+FIELD_HINTS = (
+    (re.compile(r"耐温|温度|temperature", re.I), ("temp_range", "test_temp", "test_duration")),
+    (re.compile(r"压缩|变形|compression|\bcs\b", re.I), ("cs", "test_temp", "test_duration")),
+    (re.compile(r"耐化学|溶胀|化学|chem", re.I), ("chem_resistance", "test_medium", "test_temp")),
+    (re.compile(r"认证|food|fda|usp|iso", re.I), ("certifications",)),
+)
+
+COMPARE_WORDS = ("对比", "比较", "哪个", "最高", "最低", "最大", "最小", "最好", "最差", "分别", "排序")
+MAX_UP_WORDS = ("最高", "最大", "最好", "最强")
+MAX_DOWN_WORDS = ("最低", "最小", "最差", "最弱")
+
+REASON_LABELS = {
+    "grade": "按牌号",
+    "supplier": "按供应商",
+    "material": "按材质",
+    "application": "按应用",
+    "product": "当前筛选产品",
+}
+
+
+def _tidy(text) -> str:
+    """比对用的归一化：去空格/连字符/标点/商标符号，转小写。"""
+    return re.sub(r"[\s\-_·,，。.？?、®™()（）/／+:：]+", "", str(text or "").lower())
+
+
+# 材质名不是牌号：库里存在 grade 就写成「FKM」的脏数据，
+# 不排除的话「FFKM 材质」会被解析成某个叫 FKM 的「产品」，问到错的表上。
+MATERIAL_WORDS = {_tidy(code) for code, _keys in catalog.MATERIAL_RULES} | {
+    _tidy(label) for label in catalog.LABELS.values()
+} | {"other", "未归类", "ffpm"}
+
+
+def _grade_tokens(item: dict) -> set:
+    """一个产品可以被叫出的写法：全名、去品牌前缀、以及末尾 1~3 个词。"""
+    name = catalog.clean_grade(item.get("product_name") or "")
+    words = name.split()
+    tokens = {name}
+    for n in (1, 2, 3):
+        if len(words) >= n:
+            tokens.add(" ".join(words[-n:]))
+    if len(words) > 1:
+        tokens.add(" ".join(words[1:]))
+    return {
+        token
+        for token in tokens
+        if len(_tidy(token)) >= 3 and _tidy(token) not in MATERIAL_WORDS
+    }
+
+
+def _match_materials(question: str) -> list:
+    """问题里点名的材质代号（FFKM / PEEK / 氟橡胶 …）。"""
+    low = (question or "").lower()
+    codes = []
+    for code, keys in catalog.MATERIAL_RULES:
+        for key in keys:
+            if key.isascii():
+                if re.search(rf"(?<![a-z0-9]){re.escape(key.lower())}(?![a-z0-9])", low):
+                    codes.append(code)
+                    break
+            elif key in question:
+                codes.append(code)
+                break
+    return codes
+
+
+def _usable_products() -> list:
+    """能当对比对象的产品：有牌号、不是文献、不是「未标注产品」。"""
+    out = []
+    for item in product_stats():
+        pid = str(item.get("product_id") or "")
+        if pid in ("", "all", catalog.UNNAMED, catalog.LITERATURE):
+            continue
+        if catalog.is_unnamed(item.get("product_name") or ""):
+            continue
+        if _tidy(item.get("product_name")) in MATERIAL_WORDS:
+            continue
+        out.append(item)
+    return out
+
+
+def resolve_products(question: str, product: str | None = None) -> dict:
+    """把问题解析成目标产品列表。
+
+    返回 {"products": [...], "reason": "grade|supplier|material|application|product|none"}。
+    products 为空即「库里没有目标产品」，由调用方走 LLM 兜底。
+    """
+    items = _usable_products()
+    if not items:
+        return {"products": [], "reason": "none"}
+
+    # 前端已选中某个产品：以筛选为准，问题只决定看哪些字段
+    if product and product not in ("all", ""):
+        picked = [item for item in items if str(item.get("product_id") or "") == product]
+        if picked:
+            return {"products": picked, "reason": "product"}
+
+    q = _tidy(question)
+    suppliers = named_suppliers(question)
+
+    # 1) 牌号：取命中的最长写法，避免 "P 100" 把 "P 1000" 也带进来
+    best, hits = 0, []
+    for item in items:
+        length = max((len(_tidy(t)) for t in _grade_tokens(item) if _tidy(t) in q), default=0)
+        if length > best:
+            best, hits = length, [item]
+        elif length and length == best:
+            hits.append(item)
+    if best:
+        if suppliers:
+            narrowed = [i for i in hits if i.get("supplier") in suppliers]
+            hits = narrowed or hits
+        return {"products": hits, "reason": "grade"}
+
+    # 2) 供应商：问「索尔维有哪些」是一组产品，不是单个产品
+    if suppliers:
+        picked = [item for item in items if item.get("supplier") in suppliers]
+        if picked:
+            return {"products": picked, "reason": "supplier"}
+
+    # 3) 材质：FFKM / PEEK 这类属性问题，展开成该材质下全部产品
+    codes = _match_materials(question)
+    if codes:
+        picked = [item for item in items if item.get("material") in codes]
+        if picked:
+            return {"products": picked, "reason": "material"}
+
+    # 4) 应用：行业/部件/介质命中（应用筛选栏也有对应维度）
+    hits = applications.classify(question)
+    wanted = {
+        field: labels[0][1]
+        for field, labels in (
+            ("industries", hits.get("industries") or []),
+            ("parts", hits.get("parts") or []),
+            ("media", hits.get("media") or []),
+        )
+        if labels
+    }
+    if wanted:
+        picked = [
+            item
+            for item in items
+            if applications.matches(
+                {
+                    "industries": "|".join(item.get("industries") or []),
+                    "parts": "|".join(item.get("parts") or []),
+                    "media": "|".join(item.get("media") or []),
+                },
+                wanted.get("industries") or "",
+                wanted.get("parts") or "",
+                wanted.get("media") or "",
+            )
+        ]
+        if picked:
+            return {"products": picked, "reason": "application"}
+
+    return {"products": [], "reason": "none"}
+
+
+def _product_rows(product_ids: set, names: set) -> list:
+    """按产品取全量记录（不走向量检索：对比要的是该产品的全部行）。"""
+    store = _client().get_or_create_collection(CATALOG)
+    data = store.get(include=["metadatas", "documents"])
+    rows = []
+    for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
+        meta = meta or {}
+        if str(meta.get("product_id") or "") in product_ids or _title(meta) in names:
+            rows.append((meta, doc or ""))
+    return rows
+
+
+def _cell(value) -> str:
+    """单表格单元：本地化、去竖线（否则表格列会错位）、压成一行。"""
+    if value is None:
+        return ""
+    text = localize(str(value)).replace("|", "、").replace("\r", " ")
+    return re.sub(r"\s*\n\s*", " ", text).strip()
+
+
+def _dedupe_key(value: str) -> str:
+    """去重键：纯「数字 + 单位」按数字归类（232 与 232°C 视为同一个值）。"""
+    text = str(value or "").strip()
+    if re.fullmatch(r"[-+]?\d+(?:\.\d+)?\s*(?:[°℃]?[CF]|%|h|hrs?|min|MPa|psi|MPa)?", text, re.I):
+        number = re.match(r"[-+]?\d+(?:\.\d+)?", text)
+        return f"num:{number.group(0)}" if number else text
+    return _tidy(text)
+
+
+def _num(value) -> float | None:
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", str(value or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def compare_products(products: list, question: str, rows: list | None = None,
+                     limit: int = MAX_PRODUCTS) -> dict:
+    """把一个/一组产品整理成对比表：列按问题焦点排序，一行一条库内记录。"""
+    picked = list(products)[:limit]
+    ids = {str(item.get("product_id") or "") for item in picked}
+    names = {str(item.get("product_name") or "") for item in picked}
+    data = rows if rows is not None else _product_rows(ids, names)
+
+    grouped: dict = {}
+    for meta, _doc in data:
+        title = _title(meta)
+        pid = str(meta.get("product_id") or "")
+        if title in names:
+            grouped.setdefault(title, []).append(meta)
+        elif pid in ids:
+            grouped.setdefault(pid, []).append(meta)
+
+    all_metas = [meta for metas in grouped.values() for meta in metas]
+    present = [key for key in COLUMN_ORDER if any(meta.get(key) not in (None, "") for meta in all_metas)]
+    asked = []
+    for pattern, keys in FIELD_HINTS:
+        if pattern.search(question or ""):
+            asked.extend(key for key in keys if key not in asked)
+    columns = [key for key in asked if key in present][:MAX_COLUMNS]
+    for key in present:
+        if len(columns) >= MAX_COLUMNS:
+            break
+        if key not in columns:
+            columns.append(key)
+    labels = dict(FIELDS)
+
+    table = []
+    for item in picked:
+        key = str(item.get("product_name") or "")
+        metas = grouped.get(key) or grouped.get(str(item.get("product_id") or "")) or []
+        values: dict = {}
+        for meta in metas:
+            for column in columns:
+                cell = _cell(meta.get(column))
+                if not cell:
+                    continue
+                bucket = values.setdefault(column, {})
+                # 同一个值在库里可能写成「232」和「232°C」，按数值去重，别让表格刷成 232 / 232°C
+                bucket.setdefault(_dedupe_key(cell), cell)
+        values = {column: list(bucket.values()) for column, bucket in values.items()}
+        if not any(values.values()):
+            continue
+        table.append(
+            {
+                "product": key,
+                "product_id": item.get("product_id"),
+                "cells": {column: vals for column, vals in values.items() if vals},
+                "metas": metas,
+            }
+        )
+
+    return {
+        "products": picked,
+        "columns": [{"key": key, "label": labels.get(key, key)} for key in columns],
+        "rows": table,
+        "reason": "",
+        "total": len(products),
+    }
+
+
+def _conclusion(result: dict, question: str):
+    """求极值由代码算，不交给模型：只回答「哪个最高/最低」。"""
+    want_max = any(word in question for word in MAX_UP_WORDS)
+    want_min = any(word in question for word in MAX_DOWN_WORDS)
+    if want_max == want_min:
+        return "", None
+    labels = {column["key"]: column["label"] for column in result["columns"]}
+    for column in result["columns"]:
+        best = None
+        for row in result["rows"]:
+            value = _num(row["cells"].get(column["key"]))
+            if value is None:
+                continue
+            if best is None or (value > best[0] if want_max else value < best[0]):
+                best = (value, row)
+        if best:
+            row = best[1]
+            values = row["cells"].get(column["key"]) or []
+            raw = " / ".join(values[:2])
+            return f"结论: {row['product']} {labels.get(column['key'], column['key'])}: {raw}", row
+    return "", None
+
+
+def render_compare(result: dict, question: str = "") -> str:
+    """确定性答案：标题 + 对比表 + 可选结论行（Markdown，前端已能渲染表格）。"""
+    if not result["rows"] or not result["columns"]:
+        return ""
+    products = result["products"]
+    reason = REASON_LABELS.get(result.get("reason"), "")
+    name = products[0].get("product_name") or ""
+    title = f"命中 {len(result['rows'])} 个产品" + (f" · {reason}" if reason else "")
+    if len(products) == 1 and name:
+        title = f"{name} · {reason or '产品数据'}"
+
+    columns = result["columns"]
+    head = "| " + " | ".join(["产品"] + [column["label"] for column in columns] + ["来源"]) + " |"
+    sep = "| " + " | ".join(["---"] * (len(columns) + 2)) + " |"
+
+    numbering: dict = {}
+
+    def tag(meta) -> int:
+        if id(meta) not in numbering:
+            numbering[id(meta)] = len(numbering) + 1
+        return numbering[id(meta)]
+
+    body = []
+    for row in result["rows"]:
+        cells = [str(row["product"]).replace("|", "、")]
+        for column in columns:
+            values = row["cells"].get(column["key"]) or []
+            text = " / ".join(values[:MAX_CELL_VALUES])
+            if len(values) > MAX_CELL_VALUES:
+                text += f" 等{len(values)}个值"
+            cells.append(text.replace("|", "、") or "—")
+        marks = []
+        for meta in row["metas"]:
+            number = tag(meta)
+            if number not in marks:
+                marks.append(number)
+        shown = marks[:2]
+        label = "".join(f"[{n}]" for n in shown)
+        if len(marks) > len(shown):
+            label += f"+{len(marks) - len(shown)}"
+        body.append("| " + " | ".join(cells + [label or "—"]) + " |")
+
+    out = [f"### {title}", "", head, sep, *body, ""]
+    conclusion, source_row = _conclusion(result, question)
+    if conclusion and source_row is not None:
+        marks = [tag(meta) for meta in source_row["metas"][:1]]
+        out.append(conclusion + (" " + "".join(f"[{n}]" for n in marks) if marks else ""))
+        out.append("")
+    out.append("数值取自库内记录，未推断、未换算；展开下方引用可核对原文。")
+    missing = [item.get("product_name") for item in products
+               if str(item.get("product_name")) not in {row["product"] for row in result["rows"]}]
+    if missing:
+        out.append(f"另有 {len(missing)} 个产品库内没有可对比的记录：" + "、".join(str(m) for m in missing[:4]))
+    if result["total"] > len(products):
+        out.append(f"还有 {result['total'] - len(products)} 个产品未列出，加供应商或牌号可缩小范围。")
+    return "\n".join(out)
+
+
+def answer_by_products(question: str, collection: str = CATALOG,
+                       product: str | None = None) -> dict | None:
+    """有目标产品就走结构化对比，返回 None 表示交给 LLM 兜底。"""
+    if _resolve(collection) != CATALOG:
+        return None
+    if _asks_document(question):  # 问「资料里的原文」不走表格
+        return None
+    resolved = resolve_products(question, product=product)
+    if not resolved["products"]:
+        return None
+    result = compare_products(resolved["products"], question)
+    result["reason"] = resolved["reason"]
+    if not result["rows"]:
+        return None
+    text = render_compare(result, question)
+    if not text:
+        return None
+    # 表格里编号 = 引用列表序号，只把表里用到的记录带出来
+    ordered, seen = [], set()
+    for row in result["rows"]:
+        for meta in row["metas"]:
+            if id(meta) in seen:
+                continue
+            seen.add(id(meta))
+            ordered.append(meta)
+    return {
+        "text": text,
+        "sources": build_sources(ordered),
+        "products": [item.get("product_id") for item in result["products"]],
+        "reason": resolved["reason"],
+        "columns": result["columns"],
+        "rows": result["rows"],
+    }
 
 
 # ---- 资料库管理：按来源聚合 / 查看 / 删除 / 检索调试 ----
