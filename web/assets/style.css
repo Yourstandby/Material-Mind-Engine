@@ -989,3 +989,8 @@ a.btn-ghost[hidden] { display: none; }
 }
 .acct-miss-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-miss-want { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.acct-miss-link {
+  float: right; font-family: var(--sans); font-size: 11px; letter-spacing: 0;
+  color: var(--accent); text-decoration: none; text-transform: none;
+}
+.acct-miss-link:hover { text-decoration: underline; }

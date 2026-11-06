@@ -3,7 +3,9 @@
 用法:
     from core.query_engine import retrieve, stream_tokens
 """
+import functools
 import re
+import time
 from pathlib import Path
 
 import chromadb
@@ -38,8 +40,14 @@ SUPPLIER_WORDS = (
 
 
 def named_suppliers(question: str) -> list:
-    """问题里提到的厂商（英文按词边界判断，避免 knock 里的 nok 误命中）。"""
+    """问题里提到的厂商（英文按词边界判断，避免 knock 里的 nok 误命中）。
+
+    先查静态词表 SUPPLIER_WORDS，再拿库内真实出现过的供应商名（known_suppliers）
+    补漏 —— 新供应商入库后不需要再来改代码。
+    """
     low = (question or "").lower()
+    if not low:
+        return []
     names = []
     for name, keys in SUPPLIER_WORDS:
         for key in keys:
@@ -50,7 +58,96 @@ def named_suppliers(question: str) -> list:
             elif key in low:
                 names.append(name)
                 break
+    for name in known_suppliers():
+        if _mentions(low, name) and not any(_mentions(name.lower(), hit) for hit in names):
+            names.append(name)
     return names
+
+
+# 库内供应商词表缓存：(时间戳, 名称列表)
+_SUPPLIER_CACHE: tuple[float, list[str]] = (0.0, [])
+SUPPLIER_CACHE_TTL = 600.0
+SUPPLIER_COMPANY_SUFFIX = ("有限公司", "株式会社", "公司", " corporation", " corp", " co.", " ltd", " inc", " gmbh", " s.r.l.", " b.v.")
+
+
+@functools.lru_cache(maxsize=512)
+def _mention_variants(name: str) -> tuple[str, ...]:
+    """一个供应商名在问题里可能的写法：全名 + 去掉公司后缀的短名。"""
+    base = name.strip().lower()
+    if not base:
+        return ()
+    variants = [base]
+    shortened = base
+    for suffix in SUPPLIER_COMPANY_SUFFIX:
+        if shortened.endswith(suffix):
+            shortened = shortened[: -len(suffix)].strip(" ,.")
+    if shortened and shortened != base and len(shortened) >= 2:
+        variants.append(shortened)
+    return tuple(variants)
+
+
+def _mentions(text_low: str, name: str) -> bool:
+    """text_low 里是否提到了这个供应商（英文按词边界，中文直接包含）。"""
+    for variant in _mention_variants(name):
+        if variant.isascii():
+            if len(variant) < 3:
+                continue
+            if re.search(rf"(?<![a-z]){re.escape(variant)}(?![a-z])", text_low):
+                return True
+        elif variant in text_low:
+            return True
+    return False
+
+
+def known_suppliers(limit: int = 4000, ttl: float = SUPPLIER_CACHE_TTL) -> list[str]:
+    """库内实际出现过的供应商名（动态词表，进程内缓存 TTL 秒）。
+
+    未命中看板靠它把「谁家的资料还没有」抽出来，不用维护一份手写厂商清单。
+    取不到库时返回空表，不影响问答主链路。
+    """
+    global _SUPPLIER_CACHE
+    now = time.time()
+    cached_at, cached = _SUPPLIER_CACHE
+    if cached and now - cached_at < ttl:
+        return cached
+    names: set[str] = set()
+    try:
+        col = vs.collection(CATALOG)
+        offset = 0
+        page = 1000
+        while len(names) < limit and offset < limit * 2:
+            batch = col.get(include=["metadatas"], limit=page, offset=offset)
+            metas = batch.get("metadatas") or []
+            if not metas:
+                break
+            for meta in metas:
+                name = str((meta or {}).get("supplier") or "").strip()
+                if 2 <= len(name) <= 40:
+                    names.add(name)
+            if len(metas) < page:
+                break
+            offset += page
+    except Exception:  # noqa: BLE001 - 词表取不到就退回静态表，不能拖垮问答
+        names = set()
+    result = sorted(names)
+    _SUPPLIER_CACHE = (now, result)
+    return result
+
+
+# 牌号形态：字母开头、含数字（CHEMRAZ 640 / Tecnoflon P 959 / PEEK-450G）
+GRADE_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z][A-Za-z0-9]*(?:[-\s][A-Za-z0-9.]+){0,2}\s?\d[A-Za-z0-9\-.]*)")
+
+
+def named_grades(question: str) -> list[str]:
+    """问题里点名的牌号/型号（用于未命中看板反推「该补哪个产品」）。"""
+    seen = []
+    for match in GRADE_RE.finditer(question or ""):
+        word = match.group(1).strip()
+        if len(word) < 3:
+            continue
+        if word.lower() not in [x.lower() for x in seen]:
+            seen.append(word)
+    return seen
 
 
 FIELDS = [

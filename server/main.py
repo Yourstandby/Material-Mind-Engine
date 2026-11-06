@@ -27,6 +27,7 @@ from core.query_engine import (
     build_sources,
     delete_source,
     doc_products,
+    named_grades,
     named_suppliers,
     product_options,
     product_stats,
@@ -319,6 +320,11 @@ class FeedbackIn(BaseModel):
     trigger: str = ""
 
 
+class MissResolveIn(BaseModel):
+    ids: list[int]
+    note: str = ""
+
+
 @app.post("/api/failures")
 def api_failure(body: FeedbackIn, request: Request):
     user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
@@ -344,16 +350,38 @@ def api_failures(request: Request, status: str = "open", limit: int = 100):
     return {"items": failures.list_items(status, limit), "stats": failures.stats()}
 
 
-GRADE_RE = re.compile(r"(?<![a-z0-9])([A-Z][A-Za-z0-9]*[-\s]?\d[A-Za-z0-9\-.]*)")
+# 材质缩写和常见大写词：当关键词抽出来没用，只会把看板刷成噪音
+MATERIAL_ACRONYMS = {
+    "FKM", "FFKM", "FVMQ", "VMQ", "NBR", "HNBR", "EPDM", "ACM", "AEM", "PU", "TPU", "PE",
+    "PP", "PVC", "PTFE", "PFA", "FEP", "PEEK", "PI", "PPS", "PA", "PAI", "POM", "PCTFE",
+    "MPA", "PSI", "ASTM", "DIN", "ISO", "JIS", "GB", "SAE", "CN", "OK", "API",
+}
+
+CAPS_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9&.\-]{2,}(?![A-Za-z0-9])")
 
 
 def _miss_wanted(items: list[dict], limit: int = 30) -> list[dict]:
-    """把未命中问题里的厂商 / 牌号词抽出来，聚合成「该补哪些资料」的清单。"""
+    """把未命中问题里的厂商 / 牌号词抽出来，聚合成「该补哪些资料」的清单。
+
+    三步：库内/静态词表的厂商 → 牌号形态正则 → 全大写词兼底（ZEON 这类还没入库的厂牌）。
+    兼底词可能带噪，所以单独标 kind=word，方便人工扫一眼筛掉。
+    """
     buckets: dict[str, dict] = {}
     for item in items:
         question = item.get("question") or ""
         keys: list[tuple[str, str]] = [("supplier", name) for name in named_suppliers(question)]
-        keys += [("grade", m.group(1).strip()) for m in GRADE_RE.finditer(question)]
+        keys += [("grade", word) for word in named_grades(question)]
+        known = {word.lower() for _, word in keys}
+        grades = {word.lower() for kind, word in keys if kind == "grade"}
+        for match in CAPS_RE.finditer(question):
+            word = match.group(0).strip(".")
+            low = word.lower()
+            if word.upper() in MATERIAL_ACRONYMS or low in known:
+                continue
+            # 牌号的前半段不重复登记（CHEMRAZ 640 已经算 grade 了，不再单独记 CHEMRAZ）
+            if any(grade.startswith(low) for grade in grades):
+                continue
+            keys.append(("word", word))
         seen = set()
         for kind, word in keys:
             token = (kind, word.lower())
@@ -385,6 +413,25 @@ def api_failure_misses(request: Request, limit: int = 100, days: int = 365):
         "wanted": _miss_wanted(items),
         "stats": failures.stats(),
     }
+
+
+@app.post("/api/failures/{fid}/resolve")
+def api_failure_resolve(fid: int, request: Request, note: str = ""):
+    """补完资料后关单：这条未命中从看板消失（status='fixed'）。"""
+    _require_admin(request)
+    if not failures.resolve(fid, note or None):
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"ok": True}
+
+
+@app.post("/api/failures/misses/resolve")
+def api_failure_misses_resolve(body: MissResolveIn, request: Request):
+    """按问题关单：一个未命中问题合并了多条记录，一次全关。"""
+    _require_admin(request)
+    done = [fid for fid in body.ids if failures.resolve(fid, body.note or None)]
+    if not done:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return {"ok": True, "resolved": done}
 
 
 @app.get("/api/sources")
@@ -664,6 +711,15 @@ def api_user_reset(uid: int, body: ResetIn, request: Request):
 @app.get("/login")
 def login_page():
     return FileResponse(WEB / "login.html")
+
+
+@app.get("/admin")
+def admin_page(request: Request):
+    """未命中看板：非管理员直接送回主界面，不报 403 页面。"""
+    user = auth.resolve(request.cookies.get(auth.COOKIE))
+    if not user or user.get("role") != "admin":
+        return RedirectResponse("/", status_code=302)
+    return FileResponse(WEB / "admin.html")
 
 
 app.mount("/assets", StaticFiles(directory=WEB / "assets"), name="assets")
