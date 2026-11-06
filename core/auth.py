@@ -29,6 +29,30 @@ USERNAME_OK = re.compile(r"^[\w\u4e00-\u9fa5.-]{3,32}$")
 MAX_FAILS = 5
 LOCK_WINDOW = 300
 
+# 允许匿名调用的读接口：只放 READONLY_PATHS，写接口永远要登录。
+READONLY_PATHS = ("/api/chat", "/api/search", "/api/bootstrap")
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def anonymous_allowed(path: str, client_ip: str = "") -> bool:
+    """读接口的匿名放行判定。
+
+    两种开启方式，都不影响 /api/auth/*、上传、删除类接口：
+        MME_ALLOW_ANONYMOUS=1                全部来源可匿名读
+        MME_ANONYMOUS_IPS=172.16.1.121,...   仅白名单 IP 可匿名读
+    两边都没配 = 退回原来的全站登录。
+    """
+    if path not in READONLY_PATHS:
+        return False
+    if str(env("MME_ALLOW_ANONYMOUS", "") or "").strip().lower() in _TRUTHY:
+        return True
+    allowed = [
+        item.strip()
+        for item in str(env("MME_ANONYMOUS_IPS", "") or "").replace(";", ",").split(",")
+        if item.strip()
+    ]
+    return bool(allowed) and str(client_ip or "").strip() in allowed
+
 
 def _secret() -> bytes:
     if SECRET_FILE.exists():

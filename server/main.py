@@ -476,10 +476,22 @@ def api_file(doc_id: str):
 PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/health", "/favicon.ico"}
 
 
+def _client_ip(request: Request) -> str:
+    """真实来源 IP：反代后取 X-Forwarded-For 首段（白名单按它比）。"""
+    forwarded = request.headers.get("x-forwarded-for") or ""
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return (request.client.host if request.client else "") or ""
+
+
 @app.middleware("http")
 async def require_login(request: Request, call_next):
     path = request.url.path
     if path in PUBLIC_PATHS or path.startswith("/assets"):
+        return await call_next(request)
+    # 只读三件套（chat / search / bootstrap）可按开关或 IP 白名单匿名调用；
+    # 上传、删除、/api/auth/*、资料库写操作照旧要登录。
+    if auth.anonymous_allowed(path, _client_ip(request)):
         return await call_next(request)
     if auth.resolve(request.cookies.get(auth.COOKIE)) is None:
         if path.startswith("/api/"):

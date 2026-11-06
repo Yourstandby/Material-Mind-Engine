@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 只读接口可按开关或 IP 白名单放行匿名调用：`MME_ALLOW_ANONYMOUS=1` 全员可匿名读，`MME_ANONYMOUS_IPS=172.16.1.121,...` 只放行指定来源；放行范围仅 `/api/chat`、`/api/search`、`/api/bootstrap`，上传/删除/`/api/auth/*`/资料库写操作照旧要登录（`core/auth.anonymous_allowed` + 中间件，反代后按 `X-Forwarded-For` 首段取真实 IP）
 - 问答分两层：先把问题里的实体解析成库内目标产品（牌号 > 供应商 > 材质 > 应用），命中就直接出确定性对比表（`resolve_products` / `compare_products` / `render_compare`），数值全部来自库、不经过模型；一个产品都解析不出来才走 RAG + LLM 兜底。修掉了「FFKM 材质」回答「资料不足」、单问「FFKM」回答「库中没有该品牌」这类误判（材质/品牌名被当成了产品）
 - 求极值（最高/最低）由代码计算并附引用编号，不再交给模型复述
 - 材质代号（FKM / FFKM / PEEK …）不再被当成牌号匹配，库里 `grade` 写成材质名的脏数据也不进入对比表
