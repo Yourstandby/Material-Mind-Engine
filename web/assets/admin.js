@@ -121,37 +121,28 @@ async function load() {
 
 let ACCESS = null;
 
-function tierLabel(id) {
-  const hit = ((ACCESS && ACCESS.tiers) || []).find((t) => t.id === id);
+function levelLabel(id) {
+  const hit = ((ACCESS && ACCESS.levels) || []).find((x) => x.id === id);
   return hit ? hit.label : id;
 }
 
-function renderPolicy(data) {
-  const box = $("#adbPolicy");
-  if (!box) return;
-  const guest = data.guest_tiers || [];
-  box.innerHTML = (data.tiers || [])
-    .map(
-      (t) =>
-        `<span class="chip tier-chip${guest.includes(t.id) ? " on" : ""}" data-tier="${esc(t.id)}" title="${esc(t.hint || "")}">` +
-        `游客可读：${esc(t.label)}</span>`
-    )
-    .join("") +
-    `<span class="chip" title="新入库资料的默认级别">默认级别：${esc(tierLabel(data.default_tier))}</span>`;
+function fillLevelSelect(el, selected) {
+  if (!el) return;
+  el.innerHTML = ((ACCESS && ACCESS.levels) || [])
+    .map((x) => `<option value="${esc(x.id)}"${x.id === selected ? " selected" : ""}>${esc(x.label)}</option>`)
+    .join("");
+}
 
+function renderDefaults(data) {
+  fillLevelSelect($("#adbDefault"), data.default_level);
+  fillLevelSelect($("#adbLevelPick"), "admin");
   const folders = $("#adbFolder");
   if (folders) {
     folders.innerHTML =
-      `<option value="">按文件夹批量设置…</option>` +
+      `<option value="">选文件夹…</option>` +
       (data.folders || [])
         .map((f) => `<option value="${esc(f.id)}">${esc(f.name)}（${f.count}）</option>`)
         .join("");
-  }
-  const pick = $("#adbTierPick");
-  if (pick) {
-    pick.innerHTML = (data.tiers || [])
-      .map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`)
-      .join("");
   }
 }
 
@@ -163,8 +154,8 @@ function renderDocs(data) {
     box.innerHTML = `<div class="empty">资料库还是空的。</div>`;
     return;
   }
-  const head = `<div class="tier-row head"><div>资料</div><div>文件夹</div><div>分级</div></div>`;
   const folderName = (id) => ((data.folders || []).find((f) => f.id === id) || {}).name || "未分类";
+  const head = `<div class="tier-row head"><div>资料</div><div>文件夹</div><div>可见级别</div></div>`;
   box.innerHTML =
     head +
     docs
@@ -173,9 +164,9 @@ function renderDocs(data) {
           `<div class="tier-row">` +
           `<div class="tier-name">${esc(d.title || d.name || d.doc_id)}<small>${esc(d.name || "")} · ${d.records} 条</small></div>` +
           `<div class="miss-t">${esc(folderName(d.folder_id))}</div>` +
-          `<div><select class="doc-tier" data-doc="${esc(d.doc_id)}">` +
-          (data.tiers || [])
-            .map((t) => `<option value="${esc(t.id)}"${t.id === d.tier ? " selected" : ""}>${esc(t.label)}</option>`)
+          `<div><select class="doc-level" data-doc="${esc(d.doc_id)}">` +
+          ((ACCESS && ACCESS.levels) || [])
+            .map((x) => `<option value="${esc(x.id)}"${x.id === d.level ? " selected" : ""}>${esc(x.label)}</option>`)
             .join("") +
           `</select></div></div>`
       )
@@ -199,63 +190,62 @@ async function loadAccess() {
     if (res.status === 401 || res.status === 403) return;
     if (!res.ok) throw new Error("加载失败");
     ACCESS = await res.json();
-    renderPolicy(ACCESS);
+    renderDefaults(ACCESS);
     renderDocs(ACCESS);
   } catch (err) {
     $("#adbDocs").innerHTML = `<div class="empty">分级加载失败：${esc(err.message)}</div>`;
   }
 }
 
-async function toggleGuestTier(tier) {
-  const guest = new Set((ACCESS && ACCESS.guest_tiers) || []);
-  if (guest.has(tier)) guest.delete(tier);
-  else guest.add(tier);
+async function setDocLevel(select) {
   try {
-    const data = await api("PATCH", "/api/access/policy", { guest_tiers: [...guest] });
-    ACCESS.guest_tiers = data.guest_tiers;
-    renderPolicy(ACCESS);
-    toast(data.guest_tiers.length ? `游客可读：${data.guest_tiers.map(tierLabel).join("、")}` : "已关闭游客读取");
-  } catch (err) {
-    toast(err.message);
-  }
-}
-
-async function setDocTier(select) {
-  try {
-    await api("PATCH", `/api/library/${encodeURIComponent(select.dataset.doc)}/tier`, { tier: select.value });
+    const data = await api("PATCH", `/api/library/${encodeURIComponent(select.dataset.doc)}/level`, {
+      level: select.value,
+    });
     const doc = (ACCESS.docs || []).find((d) => d.doc_id === select.dataset.doc);
-    if (doc) doc.tier = select.value;
-    toast(`已设为${tierLabel(select.value)}`);
+    if (doc) doc.level = data.level;
+    toast(`已设为${levelLabel(data.level)}`);
   } catch (err) {
     toast(err.message);
     loadAccess();
   }
 }
 
-async function applyFolderTier() {
+async function applyFolderLevel() {
   const fid = $("#adbFolder").value;
-  const tier = $("#adbTierPick").value;
+  const level = $("#adbLevelPick").value;
   if (!fid) {
     toast("先选文件夹");
     return;
   }
   try {
-    const data = await api("POST", "/api/access/folder", { folder_id: fid, tier });
-    toast(`已把 ${data.changed} 份资料设为${tierLabel(tier)}`);
+    const data = await api("POST", "/api/access/folder", { folder_id: fid, level });
+    toast(`已把 ${data.changed} 份资料设为${levelLabel(data.level)}`);
     await loadAccess();
   } catch (err) {
     toast(err.message);
   }
 }
 
+async function saveDefaultLevel(select) {
+  try {
+    const data = await api("PATCH", "/api/access/policy", { default_level: select.value });
+    ACCESS.default_level = data.default_level;
+    toast(`新投喂资料默认：${levelLabel(data.default_level)}`);
+  } catch (err) {
+    toast(err.message);
+    loadAccess();
+  }
+}
+
 document.addEventListener("click", (event) => {
-  const chip = event.target.closest(".tier-chip");
-  if (chip) toggleGuestTier(chip.dataset.tier);
-  if (event.target.closest("#adbFolderGo")) applyFolderTier();
+  if (event.target.closest("#adbFolderGo")) applyFolderLevel();
 });
 
 document.addEventListener("change", (event) => {
-  if (event.target.classList.contains("doc-tier")) setDocTier(event.target);
+  const el = event.target;
+  if (el.classList.contains("doc-level")) setDocLevel(el);
+  else if (el.id === "adbDefault") saveDefaultLevel(el);
 });
 
 loadAccess();

@@ -92,7 +92,7 @@ def bootstrap(request: Request):
     products = product_options(allowed=allowed)
     folders = repo.folders()
     if allowed is not None:
-        visible = access.visible_folder_ids(access.GUEST_ROLE)
+        visible = access.visible_folder_ids(access.LEVEL_GUEST)
         folders = [item for item in folders if item["id"] in visible]
     return {
         "collections": products,
@@ -146,6 +146,7 @@ async def ingest_file(
     collection: str = Form("catalog"),
     material: str = Form(""),
     folder: str = Form(""),
+    level: str = Form(""),
 ):
     data = await file.read()
     filename = file.filename or "upload"
@@ -163,7 +164,16 @@ async def ingest_file(
         pass
 
     # 后台线程跑抽取，HTTP 立即返回任务号；刷新页面后按任务号恢复进度
-    job = jobs.start(filename, data, collection, run_ingest, material, folder, with_cancel=True)
+    job = jobs.start(
+        filename,
+        data,
+        collection,
+        run_ingest,
+        material,
+        folder,
+        access.normalize_level(level or access.policy()["default_level"]),
+        with_cancel=True,
+    )
     return {"job_id": job["id"], "filename": filename, "collection": collection}
 
 
@@ -608,12 +618,15 @@ PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me
 
 
 def _allowed(request: Request | None):
-    """游客读权限白名单：按文档分级得出 doc_id 集合；登录账号 / 内部调用不限制。"""
+    """按角色算可读 doc_id 白名单。
+
+    管理员不限制；登录用户读「游客可见 + 登录用户可见」；
+    游客（未登录）只读「游客可见」。级别单向包含，见 core/access.py。
+    """
     if request is None:
         return None
-    if auth.resolve(request.cookies.get(auth.COOKIE)):
-        return None
-    return access.visible_doc_ids(access.GUEST_ROLE)
+    user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
+    return access.visible_doc_ids(str(user.get("role") or access.LEVEL_GUEST))
 
 
 def _client_ip(request: Request) -> str:
@@ -727,55 +740,55 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
-class TierIn(BaseModel):
-    tier: str
+class LevelIn(BaseModel):
+    level: str
 
 
 class PolicyIn(BaseModel):
-    guest_tiers: list[str] | None = None
-    default_tier: str | None = None
+    default_level: str | None = None
 
 
-class FolderTierIn(BaseModel):
+class FolderLevelIn(BaseModel):
     folder_id: str
-    tier: str
+    level: str
 
 
 @app.get("/api/access")
 def api_access(request: Request):
-    """分级总览：等级定义 + 游客策略 + 每份资料的分级。"""
+    """分级总览：级别定义 + 默认级别 + 每份资料的可见级别。"""
     _require_admin(request)
     return access.overview()
 
 
 @app.patch("/api/access/policy")
 def api_access_policy(body: PolicyIn, request: Request):
-    """设定游客可读的级别（可多选）与新资料默认级别。"""
+    """设定新投喂资料的默认可见级别。"""
     _require_admin(request)
     try:
-        return access.save_policy(body.guest_tiers, body.default_tier)
+        return access.save_policy(body.default_level)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@app.patch("/api/library/{doc_id}/tier")
-def api_doc_tier(doc_id: str, body: TierIn, request: Request):
+@app.patch("/api/library/{doc_id}/level")
+def api_doc_level(doc_id: str, body: LevelIn, request: Request):
+    """逐份调整可见级别（管理员）。"""
     _require_admin(request)
-    doc = repo.set_tier(doc_id, body.tier)
+    doc = repo.set_tier(doc_id, body.level)
     if not doc:
         raise HTTPException(status_code=404, detail="资料不存在")
-    return {"doc_id": doc_id, "tier": doc["tier"]}
+    return {"doc_id": doc_id, "level": access.level_of_doc(doc)}
 
 
 @app.post("/api/access/folder")
-def api_folder_tier(body: FolderTierIn, request: Request):
-    """按文件夹批量改分级。"""
+def api_folder_level(body: FolderLevelIn, request: Request):
+    """按文件夹批量改可见级别。"""
     _require_admin(request)
     try:
-        changed = repo.set_folder_tier(body.folder_id, body.tier)
+        changed = repo.set_folder_tier(body.folder_id, body.level)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return {"changed": changed, "tier": access.normalize_tier(body.tier)}
+    return {"changed": changed, "level": access.normalize_level(body.level)}
 
 
 @app.get("/api/users")

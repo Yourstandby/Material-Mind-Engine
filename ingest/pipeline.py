@@ -293,6 +293,7 @@ def ingest(
     collection: str = "catalog",
     material_hint: str = "",
     folder_id: str = "",
+    level: str = "",
     should_cancel=None,
 ):
     """生成器：逐条抛出进度事件。
@@ -565,7 +566,7 @@ def ingest(
             pages=len(doc["pages"]),
             chars=chars,
             records=len(keep),
-            meta=doc_meta,
+            meta={**doc_meta, **({"tier": level} if level else {})},
             path=_locate(collection, filename),
             folder_id=target_folder,
         )

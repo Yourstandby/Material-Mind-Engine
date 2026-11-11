@@ -289,6 +289,9 @@ async function ingestFile(file, row) {
   const folderSel = document.getElementById("upFolder");
   const folder = folderSel && folderSel.value !== "auto" ? folderSel.value : "";
   form.append("folder", folder);
+  // 可见级别：默认仅管理员，选中后游客/登录用户也能读（级别单向包含）
+  const levelSel = document.getElementById("upLevel");
+  form.append("level", (levelSel && levelSel.value) || "admin");
 
   setStage(row, "上传中", 6);
   try {

@@ -134,10 +134,10 @@ def register(
                 entry[key] = previous[key]
         entry["locked"] = True
 
-    # 分级：人工设过的优先，其次随抽取元数据，最后按默认级别；重新入库不重置
-    entry["tier"] = access.normalize_tier(
-        previous.get("tier") or entry.get("tier") or access.default_tier()
-    )
+    # 分级：人工设过的优先，其次随抽取元数据，最后按默认级别；重新入库不重置。
+    # 历史资料没有 tier 字段时沿用「游客可见」，不要因为重投而收紧到 admin。
+    inherited = previous.get("tier") or (access.LEGACY_LEVEL if previous else "")
+    entry["tier"] = access.normalize_level(inherited or entry.get("tier") or access.default_level())
     entry["canonical_name"] = previous.get("canonical_name") or canonical_name(entry)
     store["docs"][did] = entry
     _write(store)
@@ -276,28 +276,28 @@ def update(did: str, fields: dict) -> dict | None:
 
 
 def tier_of(doc: dict) -> str:
-    """资料分级；未打标的旧数据按默认级别处理（默认 internal）。"""
-    return access.normalize_tier((doc or {}).get("tier") or access.default_tier())
+    """资料实际生效的可见级别；历史数据缺字段时按「游客可见」。"""
+    return access.level_of_doc(doc or {})
 
 
-def set_tier(did: str, tier: str) -> dict | None:
-    """设置单份资料的分级。等级只影响读权限，不动向量库。"""
+def set_tier(did: str, level: str) -> dict | None:
+    """设置单份资料的可见级别。级别只影响读权限，不动向量库。"""
     data = _read()
     doc = data["docs"].get(did)
     if not doc:
         return None
-    doc["tier"] = access.normalize_tier(tier)
+    doc["tier"] = access.normalize_level(level)
     doc["updated_at"] = _now()
     _write(data)
     return doc
 
 
-def set_folder_tier(fid: str, tier: str) -> int:
-    """按文件夹批量改分级，返回改动份数。"""
+def set_folder_tier(fid: str, level: str) -> int:
+    """按文件夹批量改可见级别，返回改动份数。"""
     data = _read()
     if fid not in data["folders"]:
         raise ValueError("文件夹不存在")
-    level = access.normalize_tier(tier)
+    level = access.normalize_level(level)
     changed = 0
     for doc in data["docs"].values():
         if (doc.get("folder_id") or UNFILED) != fid or doc.get("tier") == level:

@@ -888,15 +888,13 @@ def resolve_products(question: str, product: str | None = None, allowed=None) ->
     return {"products": [], "reason": "none"}
 
 
-def _product_rows(product_ids: set, names: set, allowed=None) -> list:
+def _product_rows(product_ids: set, names: set) -> list:
     """按产品取全量记录（不走向量检索：对比要的是该产品的全部行）。"""
     store = _client().get_or_create_collection(CATALOG)
     data = store.get(include=["metadatas", "documents"])
     rows = []
     for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
         meta = meta or {}
-        if not access.meta_allowed(meta, allowed):
-            continue
         if str(meta.get("product_id") or "") in product_ids or _title(meta) in names:
             rows.append((meta, doc or ""))
     return rows
@@ -937,7 +935,9 @@ def compare_products(products: list, question: str, rows: list | None = None,
     picked = list(products)[:limit]
     ids = {str(item.get("product_id") or "") for item in picked}
     names = {str(item.get("product_name") or "") for item in picked}
-    data = rows if rows is not None else _product_rows(ids, names, allowed)
+    data = rows if rows is not None else _product_rows(ids, names)
+    if allowed is not None:
+        data = [(meta, doc) for meta, doc in data if access.meta_allowed(meta, allowed)]
 
     grouped: dict = {}
     for meta, _doc in data:

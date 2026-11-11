@@ -1,4 +1,6 @@
-"""数据分级 + 游客可见范围的单元测试。"""
+"""资料可见级别（游客 / 登录用户 / 管理员）的单元测试。"""
+
+import json
 
 import pytest
 
@@ -17,78 +19,109 @@ def lib(tmp_path, monkeypatch):
 
 def _docs():
     a = repo.register(b"doc-a", "a.pdf", "catalog")
-    b = repo.register(b"doc-b", "b.pdf", "catalog")
+    b = repo.register(b"doc-b", "c.pdf", "catalog")
     return a["doc_id"], b["doc_id"]
 
 
-def test_new_doc_defaults_to_internal(lib):
-    a, b = _docs()
-    assert repo.tier_of(repo.get(a)) == access.TIER_INTERNAL
-    # 默认游客只能读 public，所以什么都看不到
+def test_new_doc_defaults_to_admin_only(lib):
+    a, _b = _docs()
+    assert repo.tier_of(repo.get(a)) == access.LEVEL_ADMIN
+    # 默认只有管理员读得到
     assert access.visible_doc_ids("guest") == set()
-    assert access.visible_doc_ids("member") is None
+    assert access.visible_doc_ids("member") == set()
     assert access.visible_doc_ids("admin") is None
 
 
-def test_guest_reads_only_selected_tier(lib):
+def test_legacy_docs_are_guest_visible(lib):
+    """历史资料没有 tier 字段 → 按游客可见，对所有人放开。"""
+    _docs()
+    store = json.loads(repo.INDEX.read_text(encoding="utf-8"))
+    for doc in store["docs"].values():
+        doc.pop("tier", None)
+    repo.INDEX.write_text(json.dumps(store), encoding="utf-8")
+
+    ids = {doc["doc_id"] for doc in repo.all_docs()}
+    assert access.visible_doc_ids("guest") == ids
+    assert access.visible_doc_ids("member") == ids
+    assert access.level_of_doc({}) == access.LEVEL_GUEST
+
+
+def test_level_is_cumulative(lib):
     a, b = _docs()
-    repo.set_tier(a, "public")
+    repo.set_tier(a, "guest")
+    repo.set_tier(b, "member")
     assert access.visible_doc_ids("guest") == {a}
+    assert access.visible_doc_ids("member") == {a, b}
+    assert access.visible_doc_ids("admin") is None
 
-    where = access.where(access.visible_doc_ids("guest"))
-    assert where == {"doc_id": {"$in": [a]}}
-    assert access.meta_allowed({"doc_id": a}, {a}) is True
-    assert access.meta_allowed({"doc_id": b}, {a}) is False
-    assert access.meta_allowed({"doc_id": ""}, {a}) is False
-    # 未限制（登录账号）时不做任何过滤
-    assert access.meta_allowed({}, None) is True
+    # 单文档判定：管理员什么都能读，游客只读 guest 级
+    doc_guest = {"doc_id": a, "tier": "guest"}
+    doc_member = {"doc_id": b, "tier": "member"}
+    assert access.can_read_doc("guest", doc_guest) is True
+    assert access.can_read_doc("guest", doc_member) is False
+    assert access.can_read_doc("member", doc_guest) is True
+    assert access.can_read_doc("member", doc_member) is True
+    assert access.can_read_doc("admin", doc_member) is True
 
 
-def test_policy_can_open_multiple_tiers(lib):
-    a, b = _docs()
-    repo.set_tier(a, "public")
-    access.save_policy(["public", "internal"])
-    assert access.visible_doc_ids("guest") == {a, b}
-    access.save_policy(["confidential"])
-    assert access.visible_doc_ids("guest") == set()
-    # 空集合也要生成一个必定为空的 where，不能退化成「不过滤」
+def test_where_sentinel_and_merge(lib):
+    assert access.where(None) is None
     assert access.where(set()) == {"doc_id": {"$in": [access.NONE_ID]}}
-
-
-def test_env_override_opens_everything(lib, monkeypatch):
-    a, b = _docs()
-    monkeypatch.setattr(access, "env", lambda key, default="": "all" if key == "MME_GUEST_TIERS" else default)
-    # all 仍然只放开索引里登记过的资料，向量库里的孤儿 chunk 不会漏
-    assert access.visible_doc_ids("guest") == {a, b}
-
-
-def test_folder_bulk_tier(lib):
-    a, b = _docs()
-    fid = next(f["id"] for f in repo.folders() if f["id"] == "fkm")
-    repo.move_doc(a, fid)
-    assert repo.set_folder_tier(fid, "public") == 1
-    assert repo.tier_of(repo.get(a)) == access.TIER_PUBLIC
-    assert repo.tier_of(repo.get(b)) == access.TIER_INTERNAL
-
-
-def test_reingest_keeps_manual_tier(lib):
-    a, _b = _docs()
-    repo.set_tier(a, "confidential")
-    again = repo.register(b"doc-a", "a.pdf", "catalog")
-    assert again["tier"] == access.TIER_CONFIDENTIAL
-
-
-def test_unknown_tier_falls_back_to_default(lib):
-    a, _b = _docs()
-    repo.set_tier(a, "whatever")
-    assert repo.tier_of(repo.get(a)) == access.TIER_INTERNAL
-    assert access.normalize_tier("PUBLIC") == access.TIER_PUBLIC
-
-
-def test_merge_where(lib):
-    base = {"product_id": "solvay__p-100"}
     scope = {"doc_id": {"$in": ["x"]}}
+    base = {"product_id": "solvay__p-100"}
     assert access.merge_where(base, scope) == {"$and": [base, scope]}
     assert access.merge_where(base, None) == base
     assert access.merge_where(None, scope) == scope
     assert access.merge_where(None, None) is None
+
+
+def test_meta_allowed_denies_unknown_doc(lib):
+    assert access.meta_allowed({"doc_id": "a"}, {"a"}) is True
+    assert access.meta_allowed({"doc_id": "b"}, {"a"}) is False
+    assert access.meta_allowed({"doc_id": ""}, {"a"}) is False
+    assert access.meta_allowed({}, None) is True
+
+
+def test_folder_bulk_level(lib):
+    a, b = _docs()
+    fid = next(f["id"] for f in repo.folders() if f["id"] == "fkm")
+    repo.move_doc(a, fid)
+    assert repo.set_folder_tier(fid, "member") == 1
+    assert repo.tier_of(repo.get(a)) == access.LEVEL_MEMBER
+    assert repo.tier_of(repo.get(b)) == access.LEVEL_ADMIN
+
+
+def test_reingest_keeps_manual_level(lib):
+    a, _b = _docs()
+    repo.set_tier(a, "guest")
+    again = repo.register(b"doc-a", "a.pdf", "catalog")
+    assert again["tier"] == access.LEVEL_GUEST
+
+
+def test_reingest_legacy_doc_stays_guest(lib):
+    a, _b = _docs()
+    store = json.loads(repo.INDEX.read_text(encoding="utf-8"))
+    store["docs"][a].pop("tier", None)
+    repo.INDEX.write_text(json.dumps(store), encoding="utf-8")
+    again = repo.register(b"doc-a", "a.pdf", "catalog")
+    assert again["tier"] == access.LEVEL_GUEST
+
+
+def test_legacy_names_map_to_roles(lib):
+    assert access.normalize_level("public") == access.LEVEL_GUEST
+    assert access.normalize_level("internal") == access.LEVEL_MEMBER
+    assert access.normalize_level("confidential") == access.LEVEL_ADMIN
+    assert access.normalize_level("GUEST") == access.LEVEL_GUEST
+    assert access.normalize_level("whatever") == access.default_level()
+
+
+def test_default_level_env_and_policy(lib, monkeypatch):
+    assert access.default_level() == access.LEVEL_ADMIN
+    monkeypatch.setattr(
+        access, "env", lambda key, default="": "member" if key == "MME_DEFAULT_VISIBILITY" else default
+    )
+    assert access.default_level() == access.LEVEL_MEMBER
+    monkeypatch.setattr(access, "env", lambda key, default="": "")
+    assert access.save_policy("guest")["default_level"] == access.LEVEL_GUEST
+    with pytest.raises(ValueError):
+        access.save_policy("nope")

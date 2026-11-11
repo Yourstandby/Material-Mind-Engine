@@ -109,6 +109,11 @@
   <div class="uploader-head">
     <span class="uploader-title">入库队列</span>
     <select id="upFolder" class="up-folder" aria-label="目标文件夹"></select>
+    <select id="upLevel" class="up-folder" aria-label="可见级别">
+      <option value="admin" selected>仅管理员可见</option>
+      <option value="member">登录用户可见</option>
+      <option value="guest">游客可见</option>
+    </select>
     <span class="uploader-sum" id="upSum"></span>
     <button class="uploader-close" id="upClose" type="button" aria-label="收起"><span class="ico" data-icon="x"></span></button>
   </div>
@@ -158,6 +163,6 @@
 <script src="/assets/icons.js?v=20261106a"></script>
 <script src="/assets/app.js?v=20261106a"></script>
 <script src="/assets/resources.js?v=20261106a"></script>
-<script src="/assets/upload.js?v=20261106a"></script>
+<script src="/assets/upload.js?v=20261112a"></script>
 </body>
 </html>

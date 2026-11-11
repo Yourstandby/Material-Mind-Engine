@@ -85,12 +85,14 @@
 
   <div class="stats" id="adbStats"></div>
 
-  <div class="sec-t">游客可见分级</div>
-  <p class="adm-sub" style="margin:0 0 10px">点级别切换「游客可读」范围；单份资料可在下方逐个调。未在列表里的旧数据按默认级别处理，游客一律不可见。</p>
-  <div class="chips" id="adbPolicy"><span class="empty">加载中…</span></div>
+  <div class="sec-t">资料可见级别</div>
+  <p class="adm-sub" style="margin:0 0 10px">级别 = 最低可见角色，单向包含：游客可见 ⊃ 登录用户可见 ⊃ 仅管理员。新投喂默认「仅管理员」，已入库的可逐份或按文件夹调；历史资料按「游客可见」处理。</p>
   <div class="folder-bar">
-    <select id="adbFolder"><option value="">按文件夹批量设置…</option></select>
-    <select id="adbTierPick"></select>
+    <span class="miss-t">新投喂默认：</span>
+    <select id="adbDefault"></select>
+    <span class="miss-t">按文件夹批量：</span>
+    <select id="adbFolder"><option value="">选文件夹…</option></select>
+    <select id="adbLevelPick"></select>
     <button type="button" id="adbFolderGo" class="btn">应用到整个文件夹</button>
   </div>
   <div id="adbDocs"><div class="empty">加载中…</div></div>
@@ -102,6 +104,6 @@
   <div id="adbList"><div class="empty">加载中…</div></div>
 </div>
 <div class="toast" id="adbToast"></div>
-<script src="/assets/admin.js?v=20261112a"></script>
+<script src="/assets/admin.js?v=20261112b"></script>
 </body>
 </html>
