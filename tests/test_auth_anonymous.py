@@ -27,8 +27,10 @@ def test_switch_opens_readonly_paths_only(monkeypatch):
     # 同一路径的写方法不放行
     for path, method in (("/api/sources", "DELETE"), ("/api/library/abc", "PATCH"),
                         ("/api/folders", "POST"), ("/api/files/abc", "POST"),
-                        ("/api/chat", "POST")):
+                        ("/api/search", "POST")):
         assert auth.anonymous_allowed(path, "10.0.0.9", method) is False
+    # 问答接口本身就是 POST，仍要放行
+    assert auth.anonymous_allowed("/api/chat", "10.0.0.9", "POST") is True
 
 
 def test_falsey_switch_value_keeps_login(monkeypatch):

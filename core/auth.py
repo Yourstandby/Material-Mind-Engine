@@ -47,6 +47,8 @@ READONLY_PATHS = (
 # 带路径参数的读接口（/api/products/{id}、/api/files/{doc_id}）
 READONLY_PREFIXES = ("/api/products/", "/api/files/")
 READONLY_METHODS = ("GET", "HEAD")
+# 少数读接口是 POST（问答带长问题 + 参数体），只能逐个放行 POST
+POST_READONLY_PATHS = ("/api/chat",)
 _TRUTHY = ("1", "true", "yes", "on")
 
 
@@ -76,8 +78,9 @@ def readonly_path(path: str) -> bool:
 
 
 def anonymous_allowed(path: str, client_ip: str = "", method: str = "GET") -> bool:
-    """读接口的匿名放行判定：方法必须是 GET/HEAD，且路径在只读白名单里。"""
-    if str(method or "GET").upper() not in READONLY_METHODS:
+    """读接口的匿名放行判定：GET/HEAD，或「POST 但是只读接口」，且路径在白名单里。"""
+    verb = str(method or "GET").upper()
+    if verb not in READONLY_METHODS and not (verb == "POST" and path in POST_READONLY_PATHS):
         return False
     if not readonly_path(path):
         return False
