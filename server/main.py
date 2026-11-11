@@ -105,14 +105,18 @@ def bootstrap(request: Request):
 
 
 @app.get("/api/products")
-def api_products(industry: str = "", part: str = "", medium: str = ""):
-    return {"items": product_stats(industry=industry, part=part, medium=medium)}
+def api_products(request: Request, industry: str = "", part: str = "", medium: str = ""):
+    return {
+        "items": product_stats(
+            industry=industry, part=part, medium=medium, allowed=_allowed(request)
+        )
+    }
 
 
 @app.get("/api/products/{product_id}")
-def api_product_detail(product_id: str, limit: int = 500):
+def api_product_detail(product_id: str, request: Request, limit: int = 500):
     """单个产品：抽取字段 + 来源文档 + 明细记录（产品页）。"""
-    detail = product_detail(product_id, limit=limit)
+    detail = product_detail(product_id, limit=limit, allowed=_allowed(request))
     names = repo.folder_map()
     for source in detail.get("sources") or []:
         doc = repo.get(source["doc_id"]) if source.get("doc_id") else None
@@ -130,9 +134,9 @@ def api_product_detail(product_id: str, limit: int = 500):
 
 
 @app.get("/api/applications")
-def api_applications():
+def api_applications(request: Request):
     """应用分布：行业 / 部件 / 介质 / 认证（供筛选栏与统计）。"""
-    return {"facets": application_facets()}
+    return {"facets": application_facets(allowed=_allowed(request))}
 
 
 @app.get("/api/health")
@@ -201,8 +205,13 @@ def api_ingest_job_cancel(job_id: str):
 
 
 @app.get("/api/folders")
-def api_folders():
-    return {"items": repo.folders()}
+def api_folders(request: Request):
+    allowed = _allowed(request)
+    items = repo.folders()
+    if allowed is not None:
+        visible = access.visible_folder_ids(_role(request))
+        items = [item for item in items if item["id"] in visible]
+    return {"items": items}
 
 
 @app.post("/api/folders")
@@ -234,8 +243,8 @@ def api_folder_delete(fid: str):
 
 
 @app.get("/api/records")
-def records(collection: str = "catalog", limit: int = 30):
-    return {"items": sample_records(collection, limit)}
+def records(request: Request, collection: str = "catalog", limit: int = 30):
+    return {"items": sample_records(collection, limit, allowed=_allowed(request))}
 
 
 REFUSAL_WORDS = ("资料不足", "没有相关", "未提供", "无相关数据")
@@ -475,15 +484,17 @@ def api_failure_misses_resolve(body: MissResolveIn, request: Request):
 
 
 @app.get("/api/sources")
-def api_sources(collection: str = "all"):
-    return {"items": source_stats(collection)}
+def api_sources(request: Request, collection: str = "all"):
+    return {"items": source_stats(collection, allowed=_allowed(request))}
 
 
 @app.get("/api/sources/records")
-def api_source_records(collection: str = "catalog", source: str = "", limit: int = 200):
+def api_source_records(
+    request: Request, collection: str = "catalog", source: str = "", limit: int = 200
+):
     if not source:
         raise HTTPException(status_code=400, detail="source 不能为空")
-    return {"items": records_of(collection, source, limit)}
+    return {"items": records_of(collection, source, limit, allowed=_allowed(request))}
 
 
 @app.delete("/api/sources")
@@ -552,6 +563,7 @@ def _library_item(doc: dict, products: dict, folder_names: dict | None = None) -
 
 @app.get("/api/library")
 def api_library(
+    request: Request,
     collection: str = "all",
     product: str = "all",
     folder: str = "all",
@@ -559,9 +571,13 @@ def api_library(
     part: str = "",
     medium: str = "",
 ):
+    allowed = _allowed(request)
     products = doc_products()
     folder_names = repo.folder_map()
-    items = [_library_item(doc, products, folder_names) for doc in repo.all_docs()]
+    docs = repo.all_docs()
+    if allowed is not None:
+        docs = [doc for doc in docs if str(doc.get("doc_id")) in allowed]
+    items = [_library_item(doc, products, folder_names) for doc in docs]
     if product and product != "all":
         items = [item for item in items if item.get("product_id") == product]
     if collection != "all":
@@ -599,10 +615,11 @@ def api_doc_rename(doc_id: str):
 
 
 @app.get("/api/files/{doc_id}")
-def api_file(doc_id: str):
+def api_file(doc_id: str, request: Request):
     """返回原始文件（PDF 可直接在浏览器里翻页、图片直接预览）。"""
+    allowed = _allowed(request)
     doc = repo.get(doc_id)
-    if not doc:
+    if not doc or (allowed is not None and doc_id not in allowed):
         raise HTTPException(status_code=404, detail="资料不存在")
     path = Path(doc.get("path") or "")
     if not path.exists():
@@ -617,6 +634,14 @@ def api_file(doc_id: str):
 PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/health", "/favicon.ico"}
 
 
+def _role(request: Request | None) -> str:
+    """当前请求的角色：未登录算游客；内部调用（request=None）按管理员不过滤。"""
+    if request is None:
+        return access.LEVEL_ADMIN
+    user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
+    return str(user.get("role") or access.LEVEL_GUEST)
+
+
 def _allowed(request: Request | None):
     """按角色算可读 doc_id 白名单。
 
@@ -625,8 +650,7 @@ def _allowed(request: Request | None):
     """
     if request is None:
         return None
-    user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
-    return access.visible_doc_ids(str(user.get("role") or access.LEVEL_GUEST))
+    return access.visible_doc_ids(_role(request))
 
 
 def _client_ip(request: Request) -> str:
@@ -644,7 +668,11 @@ async def require_login(request: Request, call_next):
         return await call_next(request)
     # 只读三件套（chat / search / bootstrap）可按开关或 IP 白名单匿名调用；
     # 上传、删除、/api/auth/*、资料库写操作照旧要登录。
-    if auth.anonymous_allowed(path, _client_ip(request)):
+    client_ip = _client_ip(request)
+    if auth.anonymous_allowed(path, client_ip, request.method):
+        return await call_next(request)
+    # 游客也进得了首页；页面里的数据仍按分级过滤
+    if path == "/" and auth.anonymous_read_enabled(client_ip):
         return await call_next(request)
     if auth.resolve(request.cookies.get(auth.COOKIE)) is None:
         if path.startswith("/api/"):

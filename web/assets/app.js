@@ -954,6 +954,21 @@ async function revealAdminEntry() {
 }
 revealAdminEntry();
 
+/* 游客（未登录）只能看，隐藏投喂、账号、退出这些要登录的入口 */
+async function applyGuestMode() {
+  try {
+    const data = await (await fetch("/api/auth/me")).json();
+    if (data.user) return;
+  } catch (e) {
+    /* 拿不到登录态也按游客处理 */
+  }
+  ["upBtn", "acctBtn", "logoutBtn", "admBtn"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  });
+}
+applyGuestMode();
+
 async function loadAcctUsers() {
   const box = document.getElementById("acctAdmin");
   const select = document.getElementById("acctUserSel");

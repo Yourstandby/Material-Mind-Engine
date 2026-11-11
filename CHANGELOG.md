@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 匿名读放行扩到全部只读接口并按方法判定：`/api/products`（含详情）、`/api/applications`、`/api/library`、`/api/sources`（含 records）、`/api/records`、`/api/folders`、`/api/files/{doc_id}` 都只放 GET/HEAD；同一路径的写方法（如 `DELETE /api/sources`、`PATCH /api/library/{id}`）仍要登录。每个接口按当前角色传 `allowed` 过滤，原始文件下载对无权限资料直接 404（不暴露存在性）；游客可进首页，页面隐藏投喂/账号/退出入口
 - 数据分级 = 「最低可见角色」，单向包含：`guest`（游客可见，游客/登录/管理员都可读）、`member`（登录用户可见）、`admin`（仅管理员，新投喂默认）。投喂时选级别（上传面板「可见级别」，默认仅管理员），已入库的在 `/admin` 逐份或按文件夹调整；历史资料没有 tier 字段一律按 `guest`（对所有人放开），重投不会把历史资料收紧。读侧按角色过滤：管理员不限制，登录用户只读 guest+member，游客只读 guest；过滤在 Chroma `where` 带 `doc_id` 白名单 + 结果二次校验（`core/access.py` → `retrieve_scored` / `product_stats` / `search_debug` / `bootstrap`），索引里没有 `doc_id` 的孤儿 chunk 对非管理员一律拒绝。旧命名 `public/internal/confidential` 自动映射为 guest/member/admin。实测：游客 bootstrap 1216 个产品 / 2 个文件夹、search 命中 8 条（历史资料全为 guest），写接口与 `/api/access` 仍 401
 - 只读接口可按开关或 IP 白名单放行匿名调用：`MME_ALLOW_ANONYMOUS=1` 全员可匿名读，`MME_ANONYMOUS_IPS=172.16.1.121,...` 只放行指定来源；放行范围仅 `/api/chat`、`/api/search`、`/api/bootstrap`，上传/删除/`/api/auth/*`/资料库写操作照旧要登录（`core/auth.anonymous_allowed` + 中间件，反代后按 `X-Forwarded-For` 首段取真实 IP）
 - 问答分两层：先把问题里的实体解析成库内目标产品（牌号 > 供应商 > 材质 > 应用），命中就直接出确定性对比表（`resolve_products` / `compare_products` / `render_compare`），数值全部来自库、不经过模型；一个产品都解析不出来才走 RAG + LLM 兜底。修掉了「FFKM 材质」回答「资料不足」、单问「FFKM」回答「库中没有该品牌」这类误判（材质/品牌名被当成了产品）

@@ -49,7 +49,15 @@ MME_ALLOW_ANONYMOUS=1            # 允许游客匿名读只读接口
 MME_ANONYMOUS_IPS=172.16.1.121   # 或只对指定来源放开
 ```
 
-只读三件套才可能匿名：`/api/chat`、`/api/search`、`/api/bootstrap`；上传、删除、`/api/auth/*`、资料库写操作、`/api/access` 永远要登录（管理员）。
+匿名的只有 GET/HEAD 的读接口：
+
+```
+/api/chat  /api/search  /api/bootstrap  /api/products  /api/products/{id}
+/api/applications  /api/library  /api/sources  /api/sources/records
+/api/records  /api/folders  /api/files/{doc_id}
+```
+
+同一路径的写方法（`DELETE /api/sources`、`PATCH /api/library/{id}`、`POST /api/folders` …）、上传、`/api/auth/*`、`/api/access` 永远要登录。原始文件下载对无权限的资料返回 404（不暴露存在性）；首页 `/` 对游客开放，页面自动隐藏投喂/账号/退出入口。
 
 ## 5. 过滤怎么生效
 

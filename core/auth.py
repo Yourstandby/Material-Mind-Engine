@@ -29,29 +29,59 @@ USERNAME_OK = re.compile(r"^[\w\u4e00-\u9fa5.-]{3,32}$")
 MAX_FAILS = 5
 LOCK_WINDOW = 300
 
-# 允许匿名调用的读接口：只放 READONLY_PATHS，写接口永远要登录。
-READONLY_PATHS = ("/api/chat", "/api/search", "/api/bootstrap")
+# 允许匿名调用的读接口：只有 GET/HEAD 能匿名，写接口永远要登录。
+# 这里只决定「能不能进」，能读到哪些资料由 core/access.py 按级别过滤。
+READONLY_PATHS = (
+    "/api/chat",
+    "/api/search",
+    "/api/bootstrap",
+    "/api/products",
+    "/api/applications",
+    "/api/library",
+    "/api/sources",
+    "/api/sources/records",
+    "/api/records",
+    "/api/folders",
+    "/api/files",
+)
+# 带路径参数的读接口（/api/products/{id}、/api/files/{doc_id}）
+READONLY_PREFIXES = ("/api/products/", "/api/files/")
+READONLY_METHODS = ("GET", "HEAD")
 _TRUTHY = ("1", "true", "yes", "on")
 
 
-def anonymous_allowed(path: str, client_ip: str = "") -> bool:
-    """读接口的匿名放行判定。
-
-    两种开启方式，都不影响 /api/auth/*、上传、删除类接口：
-        MME_ALLOW_ANONYMOUS=1                全部来源可匿名读
-        MME_ANONYMOUS_IPS=172.16.1.121,...   仅白名单 IP 可匿名读
-    两边都没配 = 退回原来的全站登录。
-    """
-    if path not in READONLY_PATHS:
-        return False
-    if str(env("MME_ALLOW_ANONYMOUS", "") or "").strip().lower() in _TRUTHY:
-        return True
-    allowed = [
+def _guest_read_ips() -> list[str]:
+    return [
         item.strip()
         for item in str(env("MME_ANONYMOUS_IPS", "") or "").replace(";", ",").split(",")
         if item.strip()
     ]
+
+
+def anonymous_read_enabled(client_ip: str = "") -> bool:
+    """游客能否匿名读（不看路径），首页 / 与只读接口共用这套开关。
+
+        MME_ALLOW_ANONYMOUS=1                全部来源可匿名读
+        MME_ANONYMOUS_IPS=172.16.1.121,...   仅白名单 IP 可匿名读
+    两边都没配 = 退回全站登录。
+    """
+    if str(env("MME_ALLOW_ANONYMOUS", "") or "").strip().lower() in _TRUTHY:
+        return True
+    allowed = _guest_read_ips()
     return bool(allowed) and str(client_ip or "").strip() in allowed
+
+
+def readonly_path(path: str) -> bool:
+    return path in READONLY_PATHS or any(path.startswith(p) for p in READONLY_PREFIXES)
+
+
+def anonymous_allowed(path: str, client_ip: str = "", method: str = "GET") -> bool:
+    """读接口的匿名放行判定：方法必须是 GET/HEAD，且路径在只读白名单里。"""
+    if str(method or "GET").upper() not in READONLY_METHODS:
+        return False
+    if not readonly_path(path):
+        return False
+    return anonymous_read_enabled(client_ip)
 
 
 def _secret() -> bytes:
