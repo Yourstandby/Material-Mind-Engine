@@ -119,9 +119,144 @@ async function load() {
   }
 }
 
+let ACCESS = null;
+
+function tierLabel(id) {
+  const hit = ((ACCESS && ACCESS.tiers) || []).find((t) => t.id === id);
+  return hit ? hit.label : id;
+}
+
+function renderPolicy(data) {
+  const box = $("#adbPolicy");
+  if (!box) return;
+  const guest = data.guest_tiers || [];
+  box.innerHTML = (data.tiers || [])
+    .map(
+      (t) =>
+        `<span class="chip tier-chip${guest.includes(t.id) ? " on" : ""}" data-tier="${esc(t.id)}" title="${esc(t.hint || "")}">` +
+        `游客可读：${esc(t.label)}</span>`
+    )
+    .join("") +
+    `<span class="chip" title="新入库资料的默认级别">默认级别：${esc(tierLabel(data.default_tier))}</span>`;
+
+  const folders = $("#adbFolder");
+  if (folders) {
+    folders.innerHTML =
+      `<option value="">按文件夹批量设置…</option>` +
+      (data.folders || [])
+        .map((f) => `<option value="${esc(f.id)}">${esc(f.name)}（${f.count}）</option>`)
+        .join("");
+  }
+  const pick = $("#adbTierPick");
+  if (pick) {
+    pick.innerHTML = (data.tiers || [])
+      .map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`)
+      .join("");
+  }
+}
+
+function renderDocs(data) {
+  const box = $("#adbDocs");
+  if (!box) return;
+  const docs = data.docs || [];
+  if (!docs.length) {
+    box.innerHTML = `<div class="empty">资料库还是空的。</div>`;
+    return;
+  }
+  const head = `<div class="tier-row head"><div>资料</div><div>文件夹</div><div>分级</div></div>`;
+  const folderName = (id) => ((data.folders || []).find((f) => f.id === id) || {}).name || "未分类";
+  box.innerHTML =
+    head +
+    docs
+      .map(
+        (d) =>
+          `<div class="tier-row">` +
+          `<div class="tier-name">${esc(d.title || d.name || d.doc_id)}<small>${esc(d.name || "")} · ${d.records} 条</small></div>` +
+          `<div class="miss-t">${esc(folderName(d.folder_id))}</div>` +
+          `<div><select class="doc-tier" data-doc="${esc(d.doc_id)}">` +
+          (data.tiers || [])
+            .map((t) => `<option value="${esc(t.id)}"${t.id === d.tier ? " selected" : ""}>${esc(t.label)}</option>`)
+            .join("") +
+          `</select></div></div>`
+      )
+      .join("");
+}
+
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || "保存失败");
+  return data;
+}
+
+async function loadAccess() {
+  try {
+    const res = await fetch("/api/access");
+    if (res.status === 401 || res.status === 403) return;
+    if (!res.ok) throw new Error("加载失败");
+    ACCESS = await res.json();
+    renderPolicy(ACCESS);
+    renderDocs(ACCESS);
+  } catch (err) {
+    $("#adbDocs").innerHTML = `<div class="empty">分级加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+async function toggleGuestTier(tier) {
+  const guest = new Set((ACCESS && ACCESS.guest_tiers) || []);
+  if (guest.has(tier)) guest.delete(tier);
+  else guest.add(tier);
+  try {
+    const data = await api("PATCH", "/api/access/policy", { guest_tiers: [...guest] });
+    ACCESS.guest_tiers = data.guest_tiers;
+    renderPolicy(ACCESS);
+    toast(data.guest_tiers.length ? `游客可读：${data.guest_tiers.map(tierLabel).join("、")}` : "已关闭游客读取");
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
+async function setDocTier(select) {
+  try {
+    await api("PATCH", `/api/library/${encodeURIComponent(select.dataset.doc)}/tier`, { tier: select.value });
+    const doc = (ACCESS.docs || []).find((d) => d.doc_id === select.dataset.doc);
+    if (doc) doc.tier = select.value;
+    toast(`已设为${tierLabel(select.value)}`);
+  } catch (err) {
+    toast(err.message);
+    loadAccess();
+  }
+}
+
+async function applyFolderTier() {
+  const fid = $("#adbFolder").value;
+  const tier = $("#adbTierPick").value;
+  if (!fid) {
+    toast("先选文件夹");
+    return;
+  }
+  try {
+    const data = await api("POST", "/api/access/folder", { folder_id: fid, tier });
+    toast(`已把 ${data.changed} 份资料设为${tierLabel(tier)}`);
+    await loadAccess();
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 document.addEventListener("click", (event) => {
-  const btn = event.target.closest(".miss-row button");
-  if (btn) resolveRow(btn);
+  const chip = event.target.closest(".tier-chip");
+  if (chip) toggleGuestTier(chip.dataset.tier);
+  if (event.target.closest("#adbFolderGo")) applyFolderTier();
 });
 
+document.addEventListener("change", (event) => {
+  if (event.target.classList.contains("doc-tier")) setDocTier(event.target);
+});
+
+loadAccess();
 load();

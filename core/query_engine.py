@@ -12,6 +12,7 @@ import chromadb
 
 from core import catalog
 from core import embeddings
+from core import access
 from core import applications
 from core import vector_store as vs
 from core.config import env
@@ -251,9 +252,9 @@ def _model() -> str:
     return model_name()
 
 
-def product_options() -> list:
+def product_options(allowed=None) -> list:
     """前端导航/筛选用的产品清单：一个产品 = 供应商 + 牌号。"""
-    items = product_stats()
+    items = product_stats(allowed=allowed)
     total = sum(item["records"] for item in items)
     out = [
         {
@@ -302,10 +303,12 @@ def product_options() -> list:
     return out
 
 
-def sample_records(collection: str, limit: int = 30) -> list:
+def sample_records(collection: str, limit: int = 30, allowed=None) -> list:
     data = _client().get_or_create_collection(collection).get(limit=limit)
     rows = []
     for doc, meta in zip(data.get("documents") or [], data.get("metadatas") or []):
+        if not access.meta_allowed(meta, allowed):
+            continue
         rows.append({"document": doc, **{k: v for k, v in (meta or {}).items()}})
     return rows
 
@@ -451,8 +454,12 @@ def retrieve_scored(
     industry: str | None = None,
     part: str | None = None,
     medium: str | None = None,
+    allowed=None,
 ):
-    """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。"""
+    """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。
+
+    allowed: 可读 doc_id 集合（游客分级用）；None 表示不限制。
+    """
     # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
     if any(word in question for word in ENUM_WORDS):
         top_k = max(top_k, 12)
@@ -485,6 +492,9 @@ def retrieve_scored(
         supplier_where = {"supplier": {"$in": suppliers}}
         where = supplier_where if not where else {"$and": [where, supplier_where]}
 
+    # 分级：游客只召回可读文档的 chunk（向量库里没有文档级元数据，按 doc_id 白名单）
+    where = access.merge_where(where, access.where(allowed))
+
     kwargs = {"n_results": fetch}
     if where:
         kwargs["where"] = where
@@ -508,6 +518,9 @@ def retrieve_scored(
         score = round(1 / (1 + float(distance)), 4) if distance is not None else None
         rows.append((doc, meta, score, index))
 
+    if allowed is not None:
+        rows = [row for row in rows if access.meta_allowed(row[1], allowed)]
+
     if app_filter:
         rows = [
             row for row in rows
@@ -526,9 +539,10 @@ def retrieve(
     industry: str | None = None,
     part: str | None = None,
     medium: str | None = None,
+    allowed=None,
 ):
     docs, metas, _scores = retrieve_scored(
-        question, collection, top_k, material, product, industry, part, medium
+        question, collection, top_k, material, product, industry, part, medium, allowed
     )
     # 没有产品名的条目（多见于综述/论文）不是「产品」，不应占着证据位置。
     # 只有当问题明确在问资料/文献时才保留；否则过滤，全滤掉时再退回原结果避免答不出来。
@@ -668,16 +682,17 @@ def query(
     top_k: int = 5,
     material: str | None = None,
     product: str | None = None,
+    allowed=None,
 ) -> tuple:
     """一次性返回（向后兼容旧前端）。"""
-    direct = answer_by_products(question, collection, product=product)
+    direct = answer_by_products(question, collection, product=product, allowed=allowed)
     if direct:
         sources = [
             f"[{item['index']}] {item['label']} | {item['source'] or '—'}"
             for item in direct["sources"]
         ]
         return direct["text"], sources
-    docs, metas = retrieve(question, collection, top_k, material, product)
+    docs, metas = retrieve(question, collection, top_k, material, product, allowed=allowed)
     if not docs:
         return "未检索到相关数据", []
     answer = "".join(stream_tokens(question, docs, metas))
@@ -780,10 +795,10 @@ def _match_materials(question: str) -> list:
     return codes
 
 
-def _usable_products() -> list:
+def _usable_products(allowed=None) -> list:
     """能当对比对象的产品：有牌号、不是文献、不是「未标注产品」。"""
     out = []
-    for item in product_stats():
+    for item in product_stats(allowed=allowed):
         pid = str(item.get("product_id") or "")
         if pid in ("", "all", catalog.UNNAMED, catalog.LITERATURE):
             continue
@@ -795,13 +810,13 @@ def _usable_products() -> list:
     return out
 
 
-def resolve_products(question: str, product: str | None = None) -> dict:
+def resolve_products(question: str, product: str | None = None, allowed=None) -> dict:
     """把问题解析成目标产品列表。
 
     返回 {"products": [...], "reason": "grade|supplier|material|application|product|none"}。
     products 为空即「库里没有目标产品」，由调用方走 LLM 兜底。
     """
-    items = _usable_products()
+    items = _usable_products(allowed=allowed)
     if not items:
         return {"products": [], "reason": "none"}
 
@@ -873,13 +888,15 @@ def resolve_products(question: str, product: str | None = None) -> dict:
     return {"products": [], "reason": "none"}
 
 
-def _product_rows(product_ids: set, names: set) -> list:
+def _product_rows(product_ids: set, names: set, allowed=None) -> list:
     """按产品取全量记录（不走向量检索：对比要的是该产品的全部行）。"""
     store = _client().get_or_create_collection(CATALOG)
     data = store.get(include=["metadatas", "documents"])
     rows = []
     for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
         meta = meta or {}
+        if not access.meta_allowed(meta, allowed):
+            continue
         if str(meta.get("product_id") or "") in product_ids or _title(meta) in names:
             rows.append((meta, doc or ""))
     return rows
@@ -915,12 +932,12 @@ def _num(value) -> float | None:
 
 
 def compare_products(products: list, question: str, rows: list | None = None,
-                     limit: int = MAX_PRODUCTS) -> dict:
+                     limit: int = MAX_PRODUCTS, allowed=None) -> dict:
     """把一个/一组产品整理成对比表：列按问题焦点排序，一行一条库内记录。"""
     picked = list(products)[:limit]
     ids = {str(item.get("product_id") or "") for item in picked}
     names = {str(item.get("product_name") or "") for item in picked}
-    data = rows if rows is not None else _product_rows(ids, names)
+    data = rows if rows is not None else _product_rows(ids, names, allowed)
 
     grouped: dict = {}
     for meta, _doc in data:
@@ -1061,16 +1078,16 @@ def render_compare(result: dict, question: str = "") -> str:
 
 
 def answer_by_products(question: str, collection: str = CATALOG,
-                       product: str | None = None) -> dict | None:
+                       product: str | None = None, allowed=None) -> dict | None:
     """有目标产品就走结构化对比，返回 None 表示交给 LLM 兜底。"""
     if _resolve(collection) != CATALOG:
         return None
     if _asks_document(question):  # 问「资料里的原文」不走表格
         return None
-    resolved = resolve_products(question, product=product)
+    resolved = resolve_products(question, product=product, allowed=allowed)
     if not resolved["products"]:
         return None
-    result = compare_products(resolved["products"], question)
+    result = compare_products(resolved["products"], question, allowed=allowed)
     result["reason"] = resolved["reason"]
     if not result["rows"]:
         return None
@@ -1128,7 +1145,7 @@ def resolve_collection(name: str) -> str:
     return _resolve(name)
 
 
-def source_stats(collection: str = CATALOG) -> list:
+def source_stats(collection: str = CATALOG, allowed=None) -> list:
     names = [_resolve(collection)]
     items = []
 
@@ -1137,6 +1154,8 @@ def source_stats(collection: str = CATALOG) -> list:
         groups: dict = {}
         for _id, meta in _rows(store):
             meta = meta or {}
+            if not access.meta_allowed(meta, allowed):
+                continue
             key, page = _split_source(str(meta.get("source") or ""))
             group = groups.setdefault(
                 key, {"records": 0, "conf": 0.0, "grades": set(), "suppliers": set(), "pages": set()}
@@ -1170,12 +1189,14 @@ def source_stats(collection: str = CATALOG) -> list:
     return sorted(items, key=lambda x: (-x["records"], x["source"]))
 
 
-def records_of(collection: str, source: str, limit: int = 200) -> list:
+def records_of(collection: str, source: str, limit: int = 200, allowed=None) -> list:
     store = _client().get_or_create_collection(_resolve(collection))
     data = store.get(include=["metadatas", "documents"])
     rows = []
     for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
         meta = meta or {}
+        if not access.meta_allowed(meta, allowed):
+            continue
         if _split_source(str(meta.get("source") or ""))[0] != source:
             continue
         rows.append((meta, doc or ""))
@@ -1200,14 +1221,18 @@ def delete_source(collection: str, source: str) -> int:
     return len(ids)
 
 
-def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> list:
+def search_debug(question: str, collection: str = CATALOG, top_k: int = 8, allowed=None) -> list:
     store = _client().get_or_create_collection(collection)
     text = expand_query(question)
+    kwargs = {"n_results": top_k}
+    scope = access.where(allowed)
+    if scope:
+        kwargs["where"] = scope
 
     if embeddings.ready():
-        result = store.query(query_embeddings=[embeddings.embed_one(text)], n_results=top_k)
+        result = store.query(query_embeddings=[embeddings.embed_one(text)], **kwargs)
     else:
-        result = store.query(query_texts=[text], n_results=top_k)
+        result = store.query(query_texts=[text], **kwargs)
 
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
@@ -1216,6 +1241,8 @@ def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> li
     hits = []
     for rank, (doc, meta, dist) in enumerate(zip(docs, metas, dists), start=1):
         meta = meta or {}
+        if not access.meta_allowed(meta, allowed):
+            continue
         hits.append(
             {
                 "rank": rank,
@@ -1236,8 +1263,22 @@ def search_debug(question: str, collection: str = CATALOG, top_k: int = 8) -> li
     return hits
 
 
+def product_identity(meta: dict) -> tuple:
+    """chunk → (product_id, 展示名)，产品页与统计共用同一套归属规则。"""
+    meta = meta or {}
+    pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
+    title = _title(meta)
+    # 只有厂商名的老数据归到「未标注产品」，不能让 Solvay 变成一个产品
+    if title == catalog.LITERATURE:
+        return catalog.LITERATURE, catalog.LITERATURE
+    if catalog.is_unnamed(title):
+        return catalog.UNNAMED, catalog.UNNAMED
+    return pid, title
+
+
 def product_stats(material: str | None = None, industry: str | None = None,
-                  part: str | None = None, medium: str | None = None) -> list:
+                  part: str | None = None, medium: str | None = None,
+                  allowed=None) -> list:
     """按产品聚合：一个产品 = 供应商 + 牌号；应用（行业/部件/介质）是筛选主维度。"""
     try:
         store = _client().get_or_create_collection(CATALOG)
@@ -1248,17 +1289,13 @@ def product_stats(material: str | None = None, industry: str | None = None,
     groups: dict = {}
     for meta in data.get("metadatas") or []:
         meta = meta or {}
+        if not access.meta_allowed(meta, allowed):
+            continue
         if material and material not in ("all", "") and meta.get("material") != material:
             continue
         if not applications.matches(meta, industry or "", part or "", medium or ""):
             continue
-        pid = str(meta.get("product_id") or meta.get("product_name") or "unknown")
-        title = _title(meta)
-        # 只有厂商名的老数据归到「未标注产品」，不能让 Solvay 变成一个产品
-        if title == catalog.LITERATURE:
-            pid = catalog.LITERATURE
-        elif catalog.is_unnamed(title):
-            pid, title = catalog.UNNAMED, catalog.UNNAMED
+        pid, title = product_identity(meta)
         group = groups.setdefault(
             pid,
             {
@@ -1304,13 +1341,14 @@ def product_stats(material: str | None = None, industry: str | None = None,
     return sorted(out, key=lambda g: (-g["records"], g["product_name"]))
 
 
-def application_facets() -> dict:
+def application_facets(allowed=None) -> dict:
     """全库应用分布（行业/部件/介质/认证），供前端筛选栏。"""
     try:
         data = _client().get_or_create_collection(CATALOG).get(include=["metadatas"])
     except Exception:
         return applications.facets([])
-    return applications.facets(data.get("metadatas") or [])
+    metas = [m for m in (data.get("metadatas") or []) if access.meta_allowed(m, allowed)]
+    return applications.facets(metas)
 
 
 def doc_products() -> dict:
@@ -1356,3 +1394,160 @@ def doc_products() -> dict:
             merged.update(dict.fromkeys(applications.values(meta, field)))
             item[field] = "|".join(merged)
     return mapping
+
+
+DETAIL_FIELDS = [(key, label) for key, label in FIELDS if key != "confidence"]
+
+
+def _field_value(meta: dict, key: str) -> str:
+    value = meta.get(key)
+    if value in (None, "", [], {}):
+        return ""
+    value = localize(value) if isinstance(value, str) else value
+    return str(value).strip()
+
+
+def product_detail(product_id: str, limit: int = 500, allowed=None) -> dict:
+    """产品详情：抽取字段（带来源）+ 来源文档 + 明细记录，供产品页使用。"""
+    empty = {
+        "product": {"product_id": product_id},
+        "fields": [],
+        "sources": [],
+        "records": [],
+    }
+    try:
+        data = _client().get_or_create_collection(CATALOG).get(
+            include=["metadatas", "documents"]
+        )
+    except Exception:
+        return empty
+
+    rows: list = []
+    for meta, doc in zip(data.get("metadatas") or [], data.get("documents") or []):
+        meta = meta or {}
+        if not access.meta_allowed(meta, allowed):
+            continue
+        pid, _title_text = product_identity(meta)
+        if product_id not in ("", "all") and pid != product_id:
+            continue
+        rows.append((meta, doc or ""))
+
+    if not rows:
+        return empty
+
+    head = {
+        "product_id": product_id,
+        "product_name": "",
+        "supplier": "",
+        "material": "",
+        "material_label": "",
+        "records": len(rows),
+        "documents": 0,
+        "grades": [],
+        "doc_types": [],
+        "industries": [],
+        "parts": [],
+        "media": [],
+        "certs": [],
+        "applications": [],
+    }
+
+    fields: dict = {}
+    documents: dict = {}
+    detail_rows: list = []
+
+    for meta, doc in rows:
+        _pid, title = product_identity(meta)
+        base, page = _split_source(str(meta.get("source") or ""))
+        doc_id = str(meta.get("doc_id") or "")
+        head["product_name"] = head["product_name"] or title
+        head["supplier"] = head["supplier"] or str(meta.get("supplier") or "")
+        head["material"] = head["material"] or str(meta.get("material") or "")
+        head["material_label"] = head["material_label"] or str(meta.get("material_label") or "")
+        for field, bucket in (("grades", "grade"),):
+            value = str(meta.get(bucket) or "")
+            if value and value not in head[field]:
+                head[field].append(value)
+        doc_type = str(meta.get("doc_type") or "")
+        if doc_type and doc_type not in head["doc_types"]:
+            head["doc_types"].append(doc_type)
+        for field in ("industries", "parts", "media", "certs"):
+            for value in applications.values(meta, field):
+                if value and value not in head[field]:
+                    head[field].append(value)
+        if meta.get("application_text"):
+            text = str(meta["application_text"])
+            if text not in head["applications"]:
+                head["applications"].append(text)
+
+        doc_entry = documents.setdefault(
+            base, {"source": base, "doc_id": doc_id, "pages": [], "records": 0}
+        )
+        doc_entry["records"] += 1
+        if doc_id and not doc_entry["doc_id"]:
+            doc_entry["doc_id"] = doc_id
+        if page and page.isdigit() and int(page) not in doc_entry["pages"]:
+            doc_entry["pages"].append(int(page))
+
+        values = []
+        for key, label in DETAIL_FIELDS:
+            text = _field_value(meta, key)
+            if not text:
+                continue
+            values.append({"key": key, "label": label, "value": text})
+            slot = fields.setdefault(key, {"key": key, "label": label, "values": {}})
+            sources = slot["values"].setdefault(text, [])
+            source_ref = {"source": base, "page": page, "doc_id": doc_id}
+            if source_ref not in sources:
+                sources.append(source_ref)
+
+        try:
+            confidence = round(float(meta.get("confidence") or 0), 2)
+        except (TypeError, ValueError):
+            confidence = None
+        detail_rows.append(
+            {
+                "source": base,
+                "page": page,
+                "doc_id": doc_id,
+                "confidence": confidence,
+                "values": values,
+                "chunk": doc[:400],
+            }
+        )
+
+    head["documents"] = len(documents)
+    head["grades"] = sorted(head["grades"])[:8]
+    head["doc_types"] = sorted(head["doc_types"])
+    head["applications"] = sorted(head["applications"])[:8]
+
+    field_list = []
+    for slot in fields.values():
+        values = []
+        for value, sources in sorted(slot["values"].items(), key=lambda kv: -len(kv[1])):
+            values.append(
+                {
+                    "value": value,
+                    "count": len(sources),
+                    "sources": sources[:8],
+                }
+            )
+        field_list.append({"key": slot["key"], "label": slot["label"], "values": values})
+    order = {key: index for index, (key, _label) in enumerate(DETAIL_FIELDS)}
+    field_list.sort(key=lambda item: order.get(item["key"], 99))
+
+    source_list = []
+    for entry in documents.values():
+        entry["pages"] = sorted(entry["pages"])
+        source_list.append(entry)
+    source_list.sort(key=lambda item: (-item["records"], item["source"]))
+
+    if limit:
+        detail_rows = detail_rows[:limit]
+
+    return {
+        "product": head,
+        "fields": field_list,
+        "sources": source_list,
+        "records": detail_rows,
+    }

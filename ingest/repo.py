@@ -14,6 +14,7 @@ from pathlib import Path
 
 import chromadb
 
+from core import access
 from core import vector_store as vs
 from core.config import env
 
@@ -133,6 +134,10 @@ def register(
                 entry[key] = previous[key]
         entry["locked"] = True
 
+    # 分级：人工设过的优先，其次随抽取元数据，最后按默认级别；重新入库不重置
+    entry["tier"] = access.normalize_tier(
+        previous.get("tier") or entry.get("tier") or access.default_tier()
+    )
     entry["canonical_name"] = previous.get("canonical_name") or canonical_name(entry)
     store["docs"][did] = entry
     _write(store)
@@ -268,6 +273,41 @@ def update(did: str, fields: dict) -> dict | None:
     doc["canonical_name"] = canonical_name(doc)
     _write(store)
     return doc
+
+
+def tier_of(doc: dict) -> str:
+    """资料分级；未打标的旧数据按默认级别处理（默认 internal）。"""
+    return access.normalize_tier((doc or {}).get("tier") or access.default_tier())
+
+
+def set_tier(did: str, tier: str) -> dict | None:
+    """设置单份资料的分级。等级只影响读权限，不动向量库。"""
+    data = _read()
+    doc = data["docs"].get(did)
+    if not doc:
+        return None
+    doc["tier"] = access.normalize_tier(tier)
+    doc["updated_at"] = _now()
+    _write(data)
+    return doc
+
+
+def set_folder_tier(fid: str, tier: str) -> int:
+    """按文件夹批量改分级，返回改动份数。"""
+    data = _read()
+    if fid not in data["folders"]:
+        raise ValueError("文件夹不存在")
+    level = access.normalize_tier(tier)
+    changed = 0
+    for doc in data["docs"].values():
+        if (doc.get("folder_id") or UNFILED) != fid or doc.get("tier") == level:
+            continue
+        doc["tier"] = level
+        doc["updated_at"] = _now()
+        changed += 1
+    if changed:
+        _write(data)
+    return changed
 
 
 def _store(collection: str):

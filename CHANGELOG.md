@@ -6,6 +6,7 @@
 
 ### 新增
 
+- 数据分级 + 游客分层读取：资料按文档打 `public` / `internal`（默认）/ `confidential` 三级，策略文件 `library/access.json` 决定游客能读哪几级（`MME_GUEST_TIERS` / `MME_DEFAULT_TIER` 可覆盖），管理页 `/admin` 可逐份调、按文件夹批量调；游客侧在 Chroma `where` 里带 `doc_id` 白名单（`core/access.visible_doc_ids` → `retrieve_scored` / `product_stats` / `search_debug` / `bootstrap`），索引里查不到 `doc_id` 的旧数据对游客一律拒绝。实测：游客可读级别为空时检索 0 命中、问答返回「未检索到相关数据」，不越过分级
 - 只读接口可按开关或 IP 白名单放行匿名调用：`MME_ALLOW_ANONYMOUS=1` 全员可匿名读，`MME_ANONYMOUS_IPS=172.16.1.121,...` 只放行指定来源；放行范围仅 `/api/chat`、`/api/search`、`/api/bootstrap`，上传/删除/`/api/auth/*`/资料库写操作照旧要登录（`core/auth.anonymous_allowed` + 中间件，反代后按 `X-Forwarded-For` 首段取真实 IP）
 - 问答分两层：先把问题里的实体解析成库内目标产品（牌号 > 供应商 > 材质 > 应用），命中就直接出确定性对比表（`resolve_products` / `compare_products` / `render_compare`），数值全部来自库、不经过模型；一个产品都解析不出来才走 RAG + LLM 兜底。修掉了「FFKM 材质」回答「资料不足」、单问「FFKM」回答「库中没有该品牌」这类误判（材质/品牌名被当成了产品）
 - 求极值（最高/最低）由代码计算并附引用编号，不再交给模型复述

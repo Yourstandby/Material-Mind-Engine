@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import auth, embeddings
+from core import access
 from core import applications
 from core import failures
 from core import vector_store as vs
@@ -29,6 +30,7 @@ from core.query_engine import (
     doc_products,
     named_grades,
     named_suppliers,
+    product_detail,
     product_options,
     product_stats,
     records_of,
@@ -85,13 +87,18 @@ def sse(payload: dict) -> str:
 
 
 @app.get("/api/bootstrap")
-def bootstrap():
-    products = product_options()
+def bootstrap(request: Request):
+    allowed = _allowed(request)
+    products = product_options(allowed=allowed)
+    folders = repo.folders()
+    if allowed is not None:
+        visible = access.visible_folder_ids(access.GUEST_ROLE)
+        folders = [item for item in folders if item["id"] in visible]
     return {
         "collections": products,
         "products": products,
-        "applications": application_facets(),
-        "folders": repo.folders(),
+        "applications": application_facets(allowed=allowed),
+        "folders": folders,
         "catalog": CATALOG,
         "config": config_status(),
     }
@@ -100,6 +107,26 @@ def bootstrap():
 @app.get("/api/products")
 def api_products(industry: str = "", part: str = "", medium: str = ""):
     return {"items": product_stats(industry=industry, part=part, medium=medium)}
+
+
+@app.get("/api/products/{product_id}")
+def api_product_detail(product_id: str, limit: int = 500):
+    """单个产品：抽取字段 + 来源文档 + 明细记录（产品页）。"""
+    detail = product_detail(product_id, limit=limit)
+    names = repo.folder_map()
+    for source in detail.get("sources") or []:
+        doc = repo.get(source["doc_id"]) if source.get("doc_id") else None
+        if not doc:
+            continue
+        path = Path(doc.get("path") or "")
+        source["title"] = doc.get("title") or ""
+        source["file"] = path.name or doc.get("original_name") or source["source"]
+        source["doc_type"] = doc.get("doc_type") or ""
+        source["year"] = doc.get("year")
+        source["publisher"] = doc.get("publisher") or ""
+        source["authors"] = doc.get("authors") or ""
+        source["folder_name"] = names.get(doc.get("folder_id") or "unfiled", "未分类")
+    return detail
 
 
 @app.get("/api/applications")
@@ -235,6 +262,7 @@ def chat(body: Ask, request: Request):
         raise HTTPException(status_code=400, detail="问题不能为空")
     user = auth.resolve(request.cookies.get(auth.COOKIE)) or {}
     username = str(user.get("username") or "")
+    allowed = _allowed(request)
 
     def gen():
         started = time.time()
@@ -246,7 +274,8 @@ def chat(body: Ask, request: Request):
             # 一个产品都解析不出来才走 RAG + LLM 兜底。
             direct = None
             try:
-                direct = answer_by_products(question, body.collection, product=body.product)
+                direct = answer_by_products(question, body.collection, product=body.product,
+                                           allowed=allowed)
             except Exception as exc:  # noqa: BLE001 - 对比层出错退回原链路，别让问答整体失败
                 log.warning("product compare failed: %s", exc)
             if direct:
@@ -267,6 +296,7 @@ def chat(body: Ask, request: Request):
                 industry=body.industry,
                 part=body.part,
                 medium=body.medium,
+                allowed=allowed,
             )
             if not docs:
                 names = named_suppliers(question)
@@ -454,8 +484,8 @@ def api_delete_source(collection: str = "catalog", source: str = ""):
 
 
 @app.get("/api/search")
-def api_search(q: str, collection: str = "catalog", top_k: int = 8):
-    return {"items": search_debug(q, collection, top_k)}
+def api_search(q: str, request: Request, collection: str = "catalog", top_k: int = 8):
+    return {"items": search_debug(q, collection, top_k, allowed=_allowed(request))}
 
 
 @app.post("/api/sources/reparse")
@@ -577,6 +607,15 @@ def api_file(doc_id: str):
 PUBLIC_PATHS = {"/login", "/api/auth/login", "/api/auth/register", "/api/auth/me", "/api/health", "/favicon.ico"}
 
 
+def _allowed(request: Request | None):
+    """游客读权限白名单：按文档分级得出 doc_id 集合；登录账号 / 内部调用不限制。"""
+    if request is None:
+        return None
+    if auth.resolve(request.cookies.get(auth.COOKIE)):
+        return None
+    return access.visible_doc_ids(access.GUEST_ROLE)
+
+
 def _client_ip(request: Request) -> str:
     """真实来源 IP：反代后取 X-Forwarded-For 首段（白名单按它比）。"""
     forwarded = request.headers.get("x-forwarded-for") or ""
@@ -686,6 +725,57 @@ def _require_admin(request: Request) -> dict:
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="需要管理员权限")
     return user
+
+
+class TierIn(BaseModel):
+    tier: str
+
+
+class PolicyIn(BaseModel):
+    guest_tiers: list[str] | None = None
+    default_tier: str | None = None
+
+
+class FolderTierIn(BaseModel):
+    folder_id: str
+    tier: str
+
+
+@app.get("/api/access")
+def api_access(request: Request):
+    """分级总览：等级定义 + 游客策略 + 每份资料的分级。"""
+    _require_admin(request)
+    return access.overview()
+
+
+@app.patch("/api/access/policy")
+def api_access_policy(body: PolicyIn, request: Request):
+    """设定游客可读的级别（可多选）与新资料默认级别。"""
+    _require_admin(request)
+    try:
+        return access.save_policy(body.guest_tiers, body.default_tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/library/{doc_id}/tier")
+def api_doc_tier(doc_id: str, body: TierIn, request: Request):
+    _require_admin(request)
+    doc = repo.set_tier(doc_id, body.tier)
+    if not doc:
+        raise HTTPException(status_code=404, detail="资料不存在")
+    return {"doc_id": doc_id, "tier": doc["tier"]}
+
+
+@app.post("/api/access/folder")
+def api_folder_tier(body: FolderTierIn, request: Request):
+    """按文件夹批量改分级。"""
+    _require_admin(request)
+    try:
+        changed = repo.set_folder_tier(body.folder_id, body.tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"changed": changed, "tier": access.normalize_tier(body.tier)}
 
 
 @app.get("/api/users")

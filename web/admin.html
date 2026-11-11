@@ -50,6 +50,27 @@
     border-radius: 4px; opacity: 0; transition: opacity .18s; pointer-events: none;
   }
   .toast.on { opacity: 1; }
+  /* 分级：游客可读级别 + 每份资料的等级 */
+  .tier-chip { cursor: pointer; user-select: none; }
+  .tier-chip.on { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,0.02); }
+  .tier-row {
+    display: grid; grid-template-columns: 1fr 150px 96px; gap: 12px; align-items: center;
+    padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 12.5px;
+  }
+  .tier-row.head { color: var(--muted); font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; }
+  .tier-name { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
+  .tier-name small { display: block; color: var(--muted); font-size: 11px; }
+  .tier-row select, .adm select {
+    font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 6px; cursor: pointer;
+  }
+  .folder-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .folder-bar .btn {
+    font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 9px; cursor: pointer;
+    transition: border-color .14s, color .14s;
+  }
+  .folder-bar .btn:hover { border-color: var(--accent); color: var(--accent); }
 </style>
 </head>
 <body>
@@ -64,6 +85,16 @@
 
   <div class="stats" id="adbStats"></div>
 
+  <div class="sec-t">游客可见分级</div>
+  <p class="adm-sub" style="margin:0 0 10px">点级别切换「游客可读」范围；单份资料可在下方逐个调。未在列表里的旧数据按默认级别处理，游客一律不可见。</p>
+  <div class="chips" id="adbPolicy"><span class="empty">加载中…</span></div>
+  <div class="folder-bar">
+    <select id="adbFolder"><option value="">按文件夹批量设置…</option></select>
+    <select id="adbTierPick"></select>
+    <button type="button" id="adbFolderGo" class="btn">应用到整个文件夹</button>
+  </div>
+  <div id="adbDocs"><div class="empty">加载中…</div></div>
+
   <div class="sec-t">该补哪些资料</div>
   <div class="chips" id="adbWanted"><span class="empty">加载中…</span></div>
 
@@ -71,6 +102,6 @@
   <div id="adbList"><div class="empty">加载中…</div></div>
 </div>
 <div class="toast" id="adbToast"></div>
-<script src="/assets/admin.js?v=20261106a"></script>
+<script src="/assets/admin.js?v=20261112a"></script>
 </body>
 </html>
