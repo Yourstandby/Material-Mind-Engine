@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Material Mind Engine</title>
-<link rel="stylesheet" href="/assets/style.css?v=20261106a">
+<link rel="stylesheet" href="/assets/style.css?v=20261123a">
 </head>
 <body>
 <div class="app">
@@ -154,6 +154,26 @@
       </div>
       <div class="acct-note" id="akResult"></div>
 
+      <div class="acct-admin-head" style="margin-top:6px">端点档案 <span class="ak-badge" id="akEpActive"></span></div>
+      <div class="acct-note">一家公司多个 OpenAI 兼容服务时可预存多套，「启用」会把端点 / Key / 模型写进 .env 并热生效。</div>
+      <div id="akEpList"><div class="acct-note">加载中…</div></div>
+      <details class="key-add" id="akEpAdd">
+        <summary>+ 增加端点</summary>
+        <div class="key-add-grid">
+          <input id="akEpName" placeholder="名称，例如：公司内网 vLLM">
+          <input id="akEpUrl" placeholder="端点 URL，例如 http://127.0.0.1:8100/v1">
+          <input id="akEpKey" placeholder="API Key（本机服务可留空）">
+          <input id="akEpModel" placeholder="模型名，例如 qwen3-30b">
+          <input id="akEpDim" type="number" min="0" step="1" placeholder="向量维度（仅 Embedding 需要）">
+          <select id="akEpPurpose">
+            <option value="both">LLM + Embedding</option>
+            <option value="llm">只用于 LLM</option>
+            <option value="embedding">只用于 Embedding</option>
+          </select>
+          <button type="button" class="btn-primary" id="akEpSave">保存端点</button>
+        </div>
+      </details>
+
       <div class="acct-admin-head" style="margin-top:6px">下游 Key · 网关签发</div>
       <div class="key-issue">
         <input id="akName" placeholder="用途，例如：工艺部-知识库">
@@ -187,7 +207,7 @@
   accept=".pdf,.docx,.xlsx,.xlsm,.html,.htm,.md,.txt,.csv,.json">
 
 <script src="/assets/icons.js?v=20261106a"></script>
-<script src="/assets/keys.js?v=20261123a"></script>
+<script src="/assets/keys.js?v=20261123b"></script>
 <script src="/assets/app.js?v=20261123a"></script>
 <script src="/assets/resources.js?v=20261106a"></script>
 <script src="/assets/upload.js?v=20261112a"></script>

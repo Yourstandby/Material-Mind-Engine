@@ -9,8 +9,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 
@@ -19,6 +21,7 @@ import httpx
 from core.config import ROOT, env, mask, settings
 
 ENV_FILE = ROOT / ".env"
+ENDPOINTS_FILE = ROOT / "endpoints.json"
 
 # 允许从网页改的键：只放接入相关，别让人从浏览器改端口 / 网关分发逻辑
 EDITABLE = (
@@ -155,6 +158,7 @@ def status() -> dict:
             "api_key": mask(embedding["api_key"] or ""),
             "dim": embedding["dim"],
         },
+        "endpoints": endpoints_state(),
     }
 
 
@@ -176,10 +180,14 @@ def _body(resp: httpx.Response) -> str:
 
 def test_llm() -> dict:
     cfg = settings()
-    base = (cfg.get("base_url") or "").rstrip("/")
+    return probe_llm(cfg.get("base_url", ""), cfg.get("api_key", ""), cfg.get("model", ""))
+
+
+def probe_llm(base_url: str, api_key: str, model: str) -> dict:
+    base = (base_url or "").rstrip("/")
     if not base:
         return {"ok": False, "error": "未配置 OPENAI_BASE_URL"}
-    headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg.get("api_key") else {}
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     started = time.perf_counter()
     try:
         with httpx.Client(timeout=15) as client:
@@ -215,7 +223,7 @@ def test_llm() -> dict:
                 f"{base}/chat/completions",
                 headers=headers,
                 json={
-                    "model": cfg.get("model"),
+                    "model": model,
                     "messages": [{"role": "user", "content": "ping"}],
                     "max_tokens": 1,
                 },
@@ -235,17 +243,26 @@ def test_embedding() -> dict:
     from core import embeddings
 
     cfg = embeddings.config()
-    base = (cfg.get("base_url") or "").rstrip("/")
-    if not base or not cfg.get("model"):
+    return probe_embedding(
+        cfg.get("base_url", ""),
+        cfg.get("api_key", ""),
+        cfg.get("model", ""),
+        int(env("EMBEDDING_DIM", "0") or 0),
+    )
+
+
+def probe_embedding(base_url: str, api_key: str, model: str, want: int = 0) -> dict:
+    base = (base_url or "").rstrip("/")
+    if not base or not model:
         return {"ok": False, "error": "未配置 EMBEDDING_BASE_URL / EMBEDDING_MODEL"}
-    headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg.get("api_key") else {}
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     started = time.perf_counter()
     try:
         with httpx.Client(timeout=20) as client:
             resp = client.post(
                 f"{base}/embeddings",
                 headers=headers,
-                json={"model": cfg["model"], "input": ["ping"]},
+                json={"model": model, "input": ["ping"]},
             )
     except Exception as exc:
         return {"ok": False, "error": _friendly(exc)}
@@ -256,7 +273,7 @@ def test_embedding() -> dict:
         dim = len(resp.json()["data"][0]["embedding"])
     except Exception:
         return {"ok": False, "status": resp.status_code, "ms": ms, "detail": "返回里没有 embedding 向量"}
-    want = int(env("EMBEDDING_DIM", "0") or 0)
+    want = int(want or 0)
     mismatch = bool(want and want != dim)
     return {
         "ok": not mismatch,
@@ -267,7 +284,7 @@ def test_embedding() -> dict:
         "detail": (
             f"维度 {dim} ≠ 配置 {want}，换维度需要重建向量库"
             if mismatch
-            else f"{cfg['model']} 通，维度 {dim}"
+            else f"{model} 通，维度 {dim}"
         ),
     }
 
@@ -277,6 +294,197 @@ def test(target: str) -> dict:
     result = test_embedding() if target == "embedding" else test_llm()
     result["target"] = "embedding" if target == "embedding" else "llm"
     result["at"] = time.strftime("%H:%M:%S")
+    return result
+
+
+# ---------------------------------------------------------------- 端点档案
+# 一家公司与多个 OpenAI 兼容服务之间切换：档案存在 endpoints.json（明文密钥，已 gitignore），
+# 「启用」= 把选中项写进 .env 并热生效，所以运行时行为与手工改 .env 完全一致。
+PURPOSES = ("llm", "embedding", "both")
+
+
+def _empty_db() -> dict:
+    return {"active": {"llm": "", "embedding": ""}, "items": []}
+
+
+def _seed_items() -> list[dict]:
+    """首次使用：把当前 .env 里的 LLM / Embedding 各录一条档案，免得列表空空的。
+
+    两个用途分开存：一个端点的模型名往往不同（对话用 qwen3，向量用 bge-m3），
+    合在一条里启用时会把 Embedding 模型写成对话模型。
+    """
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    return [
+        {
+            "id": "env-llm",
+            "name": "当前 .env 接入（LLM）",
+            "base_url": env("OPENAI_BASE_URL"),
+            "api_key": env("OPENAI_API_KEY"),
+            "model": env("LLM_MODEL"),
+            "dim": 0,
+            "purpose": "llm",
+            "created_at": stamp,
+        },
+        {
+            "id": "env-embedding",
+            "name": "当前 .env 接入（Embedding）",
+            "base_url": env("EMBEDDING_BASE_URL") or env("OPENAI_BASE_URL"),
+            "api_key": env("EMBEDDING_API_KEY") or env("OPENAI_API_KEY"),
+            "model": env("EMBEDDING_MODEL"),
+            "dim": int(env("EMBEDDING_DIM", "0") or 0),
+            "purpose": "embedding",
+            "created_at": stamp,
+        },
+    ]
+
+
+def save_endpoints(data: dict) -> None:
+    tmp = ENDPOINTS_FILE.with_name("endpoints.json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(ENDPOINTS_FILE)
+
+
+def load_endpoints() -> dict:
+    if not ENDPOINTS_FILE.exists():
+        data = _empty_db()
+        data["items"] = _seed_items()
+        data["active"] = {"llm": "env-llm", "embedding": "env-embedding"}
+        save_endpoints(data)
+        return data
+    try:
+        data = json.loads(ENDPOINTS_FILE.read_text(encoding="utf-8-sig"))
+    except Exception:
+        data = _empty_db()
+    if not isinstance(data, dict):
+        data = _empty_db()
+    data.setdefault("active", {"llm": "", "embedding": ""})
+    data.setdefault("items", [])
+    return data
+
+
+def endpoints_state() -> dict:
+    data = load_endpoints()
+    items = [
+        {**it, "api_key": mask(it.get("api_key") or ""), "has_key": bool(it.get("api_key"))}
+        for it in data["items"]
+    ]
+    return {"items": items, "active": data.get("active", {}), "file": str(ENDPOINTS_FILE)}
+
+
+def _find(data: dict, endpoint_id: str) -> dict:
+    for item in data["items"]:
+        if item.get("id") == endpoint_id:
+            return item
+    raise ValueError("端点不存在")
+
+
+def _purpose(value: str | None) -> str:
+    purpose = (value or "both").strip().lower()
+    if purpose not in PURPOSES:
+        raise ValueError("purpose 只能是 llm / embedding / both")
+    return purpose
+
+
+def _dim(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        raise ValueError("dim 必须是整数")
+
+
+def _fields(payload: dict, existing: dict | None = None) -> dict:
+    """合并前端提交的字段；Key 收到脱敏值就当没改。"""
+    current = existing or {}
+    base_url = (payload.get("base_url") if payload.get("base_url") is not None else current.get("base_url", "")) or ""
+    base_url = base_url.strip().rstrip("/")
+    if not base_url.startswith(("http://", "https://")):
+        raise ValueError("端点要以 http:// 或 https:// 开头")
+    api_key = payload.get("api_key")
+    if api_key is None or _is_masked(str(api_key)):
+        api_key = current.get("api_key", "")
+    return {
+        "name": (str(payload.get("name") or "").strip() or current.get("name") or base_url),
+        "base_url": base_url,
+        "api_key": str(api_key or "").strip(),
+        "model": str(payload.get("model") if payload.get("model") is not None else current.get("model", "")).strip(),
+        "dim": _dim(payload.get("dim") if payload.get("dim") is not None else current.get("dim", 0)),
+        "purpose": _purpose(payload.get("purpose") or current.get("purpose") or "both"),
+    }
+
+
+def add_endpoint(payload: dict) -> dict:
+    data = load_endpoints()
+    item = {"id": "ep-" + secrets.token_hex(4), **_fields(payload), "created_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    data["items"].append(item)
+    save_endpoints(data)
+    return status()
+
+
+def update_endpoint(endpoint_id: str, payload: dict) -> dict:
+    data = load_endpoints()
+    item = _find(data, endpoint_id)
+    item.update(_fields(payload, item))
+    save_endpoints(data)
+    return status()
+
+
+def delete_endpoint(endpoint_id: str) -> dict:
+    data = load_endpoints()
+    item = _find(data, endpoint_id)
+    active = data.get("active", {})
+    if endpoint_id in (active.get("llm"), active.get("embedding")):
+        raise ValueError("正在使用中，先启用别的端点再删除")
+    data["items"] = [it for it in data["items"] if it.get("id") != item["id"]]
+    save_endpoints(data)
+    return status()
+
+
+def activate_endpoint(endpoint_id: str, target: str = "both") -> dict:
+    target = (target or "both").strip().lower()
+    if target not in PURPOSES:
+        raise ValueError("target 只能是 llm / embedding / both")
+    data = load_endpoints()
+    item = _find(data, endpoint_id)
+    purpose = item.get("purpose") or "both"
+    if purpose != "both" and target == "both":
+        raise ValueError(f"这个端点只用于 {purpose}，请单独启用")
+    if purpose != "both" and target != purpose:
+        raise ValueError(f"这个端点只用于 {purpose}")
+
+    updates: dict[str, str] = {}
+    if target in ("llm", "both"):
+        updates.update(
+            {
+                "OPENAI_BASE_URL": item["base_url"],
+                "OPENAI_API_KEY": item.get("api_key", ""),
+                "LLM_MODEL": item.get("model", ""),
+            }
+        )
+        data["active"]["llm"] = item["id"]
+    if target in ("embedding", "both"):
+        updates.update(
+            {
+                "EMBEDDING_BASE_URL": item["base_url"],
+                "EMBEDDING_API_KEY": item.get("api_key", ""),
+                "EMBEDDING_MODEL": item.get("model", ""),
+            }
+        )
+        if item.get("dim"):
+            updates["EMBEDDING_DIM"] = str(item["dim"])
+        data["active"]["embedding"] = item["id"]
+    save_endpoints(data)
+    apply(updates)
+    return status()
+
+
+def test_endpoint(endpoint_id: str, target: str = "llm") -> dict:
+    item = _find(load_endpoints(), endpoint_id)
+    kind = "embedding" if (target or "llm").lower() == "embedding" else "llm"
+    if kind == "embedding":
+        result = probe_embedding(item.get("base_url", ""), item.get("api_key", ""), item.get("model", ""), _dim(item.get("dim")))
+    else:
+        result = probe_llm(item.get("base_url", ""), item.get("api_key", ""), item.get("model", ""))
+    result.update({"target": kind, "endpoint": item.get("name") or item["id"], "at": time.strftime("%H:%M:%S")})
     return result
 
 

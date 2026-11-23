@@ -1004,6 +1004,24 @@ a.btn-ghost[hidden] { display: none; }
 }
 .key-new code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
 
+/* 端点档案 */
+.key-add { border: 1px dashed var(--rule-strong); border-radius: 4px; padding: 6px 10px; }
+.key-add summary { cursor: pointer; font-size: 11.5px; color: var(--ink-2); list-style: none; }
+.key-add summary::-webkit-details-marker { display: none; }
+.key-add summary:hover { color: var(--accent); }
+.key-add-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 2px;
+}
+.key-add-grid .btn-primary { grid-column: span 2; justify-self: start; }
+.key-ep-row {
+  display: grid; grid-template-columns: 1fr 108px auto; gap: 10px; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 12px;
+}
+.key-ep-row .kn { min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.key-ep-row .kn small { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.key-ep-row .acts { display: flex; gap: 5px; justify-content: flex-end; flex-wrap: wrap; }
+.key-ep-row.on { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
 /* ───────── 不准确反馈 ───────── */
 .t-actions .bad { color: var(--muted); }
 .t-actions .bad:hover { color: var(--accent); }

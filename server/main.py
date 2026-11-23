@@ -854,6 +854,19 @@ class GatewayKeyIn(BaseModel):
     apply_scope: str = ""
 
 
+class EndpointIn(BaseModel):
+    name: str = ""
+    base_url: str = ""
+    api_key: str | None = None
+    model: str = ""
+    dim: int = 0
+    purpose: str = "both"
+
+
+class ActivateIn(BaseModel):
+    target: str = "both"
+
+
 @app.get("/api/apikeys")
 def api_apikeys(request: Request, hours: int = 24):
     """当前接入状态 + 网关下游 Key 与用量（管理员）。"""
@@ -899,6 +912,54 @@ def api_apikeys_gateway_revoke(key_id: str, request: Request):
     if not done:
         raise HTTPException(status_code=404, detail="Key 不存在")
     return {"ok": True, "gateway": apikeys.gateway_state(24)}
+
+
+@app.post("/api/apikeys/endpoints")
+def api_endpoint_new(body: EndpointIn, request: Request):
+    """新增端点档案（OpenAI 兼容服务）。"""
+    _require_admin(request)
+    try:
+        return apikeys.add_endpoint(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.patch("/api/apikeys/endpoints/{endpoint_id}")
+def api_endpoint_update(endpoint_id: str, body: EndpointIn, request: Request):
+    _require_admin(request)
+    try:
+        return apikeys.update_endpoint(endpoint_id, body.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.delete("/api/apikeys/endpoints/{endpoint_id}")
+def api_endpoint_delete(endpoint_id: str, request: Request):
+    _require_admin(request)
+    try:
+        return apikeys.delete_endpoint(endpoint_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/apikeys/endpoints/{endpoint_id}/activate")
+def api_endpoint_activate(endpoint_id: str, body: ActivateIn, request: Request):
+    """启用端点：写回 .env 并立即生效，返回最新接入状态。"""
+    _require_admin(request)
+    try:
+        return apikeys.activate_endpoint(endpoint_id, body.target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/apikeys/endpoints/{endpoint_id}/test")
+def api_endpoint_test(endpoint_id: str, request: Request, target: str = "llm"):
+    """测试档案自己的端点（不依赖 .env 当前值）。"""
+    _require_admin(request)
+    try:
+        return apikeys.test_endpoint(endpoint_id, target)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/login")

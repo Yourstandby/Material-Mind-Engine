@@ -62,6 +62,112 @@ function akRenderFields() {
       (llm.gateway ? ` · <span class="key-state ok">走本机网关</span>` : "");
   }
   akRenderGateway(AKCFG.gateway);
+  akRenderEndpoints(AKCFG.endpoints);
+}
+
+function akApply(data) {
+  AKCFG = { ...AKCFG, ...(data || {}) };
+  akRenderFields();
+}
+
+function akRenderEndpoints(ep) {
+  const box = ak$("#akEpList");
+  if (!box) return;
+  const items = (ep && ep.items) || [];
+  const active = (ep && ep.active) || {};
+  const nameOf = (id) => ((items.find((x) => x.id === id) || {}).name || "—");
+  const badge = ak$("#akEpActive");
+  if (badge) {
+    badge.innerHTML =
+      `<span class="key-state">LLM→${akEsc(nameOf(active.llm))} · Emb→${akEsc(nameOf(active.embedding))}</span>`;
+  }
+  if (!items.length) {
+    box.innerHTML = `<div class="acct-note">还没有端点档案。</div>`;
+    return;
+  }
+  box.innerHTML = items
+    .map((it) => {
+      const onLLM = active.llm === it.id;
+      const onEmb = active.embedding === it.id;
+      const tag = onLLM && onEmb ? "生效中 LLM+Emb" : onLLM ? "生效中 LLM" : onEmb ? "生效中 Emb" : "";
+      const acts = [];
+      if (it.purpose === "both") acts.push(["both", "启用"]);
+      else acts.push([it.purpose, it.purpose === "llm" ? "启用 LLM" : "启用 Emb"]);
+      return (
+        `<div class="key-ep-row${tag ? " on" : ""}">` +
+        `<div class="kn">${akEsc(it.name)}${tag ? ` <span class="key-state ok">${tag}</span>` : ""}` +
+        `<small>${akEsc(it.base_url)} · ${akEsc(it.model || "未填模型")}` +
+        `${it.has_key ? " · Key 已存" : " · 无 Key"}${it.dim ? ` · ${it.dim} 维` : ""}</small></div>` +
+        `<div class="acts">` +
+        `<button type="button" class="key-mini" data-ep="${akEsc(it.id)}" data-act="test" data-target="${
+          it.purpose === "embedding" ? "embedding" : "llm"
+        }">测</button>` +
+        `<button type="button" class="key-mini" data-ep="${akEsc(it.id)}" data-act="${
+          it.purpose === "both" ? "both" : it.purpose
+        }">${it.purpose === "both" ? "启用" : it.purpose === "llm" ? "启用 LLM" : "启用 Emb"}</button>` +
+        `<button type="button" class="key-mini danger" data-ep="${akEsc(it.id)}" data-act="delete">删</button>` +
+        `</div></div>`
+      );
+    })
+    .join("");
+}
+
+async function akEndpointAction(btn) {
+  const id = btn.dataset.ep;
+  const act = btn.dataset.act;
+  if (act === "test") {
+    const target = btn.dataset.target || "llm";
+    const box = ak$("#akResult");
+    box.textContent = "正在测端点…";
+    try {
+      const r = await akApi("POST", `/api/apikeys/endpoints/${encodeURIComponent(id)}/test?target=${target}`);
+      box.innerHTML =
+        `<span class="key-state ${r.ok ? "ok" : "bad"}">${r.ok ? "通" : "不通"} ${akEsc(r.endpoint || "")}</span> ` +
+        akEsc(r.detail || r.error || "") +
+        (r.ms ? ` · ${r.ms}ms` : "");
+    } catch (err) {
+      box.textContent = err.message;
+    }
+    return;
+  }
+  if (act === "delete") {
+    if (!confirm("删除这个端点档案？（不影响 .env）")) return;
+    try {
+      akApply(await akApi("DELETE", `/api/apikeys/endpoints/${encodeURIComponent(id)}`));
+      akToast("已删除");
+    } catch (err) {
+      akToast(err.message);
+    }
+    return;
+  }
+  if (!confirm(`启用这个端点（${act}）？将写回 .env 并立即生效。`)) return;
+  btn.disabled = true;
+  try {
+    akApply(await akApi("POST", `/api/apikeys/endpoints/${encodeURIComponent(id)}/activate`, { target: act }));
+    akToast("已启用");
+  } catch (err) {
+    btn.disabled = false;
+    akToast(err.message);
+  }
+}
+
+async function akSaveEndpoint() {
+  const payload = {
+    name: ak$("#akEpName").value.trim(),
+    base_url: ak$("#akEpUrl").value.trim(),
+    api_key: ak$("#akEpKey").value.trim(),
+    model: ak$("#akEpModel").value.trim(),
+    dim: Number(ak$("#akEpDim").value) || 0,
+    purpose: ak$("#akEpPurpose").value,
+  };
+  try {
+    akApply(await akApi("POST", "/api/apikeys/endpoints", payload));
+    ["#akEpName", "#akEpUrl", "#akEpKey", "#akEpModel", "#akEpDim"].forEach((s) => (ak$(s).value = ""));
+    ak$("#akEpAdd").open = false;
+    akToast("端点已保存");
+  } catch (err) {
+    akToast(err.message);
+  }
 }
 
 function akRenderGateway(gateway) {
@@ -117,8 +223,7 @@ async function akSave() {
   btn.disabled = true;
   btn.textContent = "保存中…";
   try {
-    AKCFG = await akApi("POST", "/api/apikeys/env", { values });
-    akRenderFields();
+    akApply(await akApi("POST", "/api/apikeys/env", { values }));
     akToast("已保存，进程内立即生效");
   } catch (err) {
     akToast(err.message);
@@ -131,8 +236,7 @@ async function akSave() {
 async function akClear(name) {
   if (!confirm(`清空 ${name}？清空后对应模型立刻不可用。`)) return;
   try {
-    AKCFG = await akApi("POST", "/api/apikeys/env", { values: { [name]: "" } });
-    akRenderFields();
+    akApply(await akApi("POST", "/api/apikeys/env", { values: { [name]: "" } }));
     akToast(`${name} 已清空`);
   } catch (err) {
     akToast(err.message);
@@ -215,6 +319,8 @@ document.addEventListener("click", (event) => {
   else if (el.closest("#akTestLLM")) akTest("llm");
   else if (el.closest("#akTestEmbed")) akTest("embedding");
   else if (el.closest("#akCreate")) akCreate();
+  else if (el.closest("#akEpSave")) akSaveEndpoint();
+  else if (el.closest("[data-ep]")) akEndpointAction(el.closest("[data-ep]"));
   else if (el.closest("[data-clear]")) akClear(el.closest("[data-clear]").dataset.clear);
   else if (el.closest("[data-revoke]")) akRevoke(el.closest("[data-revoke]"));
   else if (el.closest("[data-copy]")) akCopy(el.closest("[data-copy]"));
