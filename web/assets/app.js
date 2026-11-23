@@ -975,8 +975,10 @@ async function loadAcctUsers() {
   if (!box || !select) return;
   try {
     const me = await (await fetch("/api/auth/me")).json();
+    const keysBox = document.getElementById("acctKeys");
     if (!me.user || me.user.role !== "admin") {
       box.hidden = true;
+      if (keysBox) keysBox.hidden = true;
       return;
     }
     const data = await (await fetch("/api/users")).json();
@@ -984,9 +986,13 @@ async function loadAcctUsers() {
       .map((u) => `<option value="${u.id}">${esc(u.username)}（${u.role === "admin" ? "管理员" : "成员"}）</option>`)
       .join("");
     box.hidden = false;
+    if (keysBox) keysBox.hidden = false;
+    if (window.loadKeys) window.loadKeys();
     loadAcctMisses();
   } catch (e) {
     box.hidden = true;
+    const keysBox = document.getElementById("acctKeys");
+    if (keysBox) keysBox.hidden = true;
   }
 }
 

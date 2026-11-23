@@ -123,7 +123,7 @@
 <div class="toasts" id="toasts"></div>
 
 <div class="modal" id="acctModal" hidden>
-  <div class="modal-card">
+  <div class="modal-card wide">
     <div class="modal-head">
       <span>账号设置</span>
       <button class="modal-x" id="acctClose" type="button" aria-label="关闭">✕</button>
@@ -143,6 +143,32 @@
       <div class="acct-admin-head">未命中问题 · 待补资料 <a class="acct-miss-link" href="/admin">看板 →</a></div>
       <div class="acct-miss-list" id="acctMissList"></div>
     </div>
+    <div class="acct-admin" id="acctKeys" hidden>
+      <div class="acct-admin-head">模型接入 · API Key <span class="ak-badge" id="akHeadNote"></span></div>
+      <div class="acct-note">保存后写回 .env 并热生效，不用重启服务；Key 只显示掩码，输入框留空 = 不改。</div>
+      <div class="key-grid" id="akFields"><div class="acct-note">加载中…</div></div>
+      <div class="key-actions">
+        <button type="button" class="btn-primary" id="akSave">保存接入配置</button>
+        <button type="button" class="btn-ghost" id="akTestLLM">测 LLM</button>
+        <button type="button" class="btn-ghost" id="akTestEmbed">测 Embedding</button>
+      </div>
+      <div class="acct-note" id="akResult"></div>
+
+      <div class="acct-admin-head" style="margin-top:6px">下游 Key · 网关签发</div>
+      <div class="key-issue">
+        <input id="akName" placeholder="用途，例如：工艺部-知识库">
+        <input id="akRpm" type="number" min="1" step="1" value="120" title="每分钟请求上限">
+        <select id="akScope">
+          <option value="">仅签发</option>
+          <option value="both">签发 + 设为后端 LLM/Embedding Key</option>
+          <option value="llm">签发 + 设为后端 LLM Key</option>
+          <option value="embedding">签发 + 设为后端 Embedding Key</option>
+        </select>
+        <button type="button" class="btn-primary" id="akCreate">签发</button>
+      </div>
+      <div id="akNewKey"></div>
+      <div id="akList"><div class="acct-note">加载中…</div></div>
+    </div>
     <div class="modal-foot"><span id="acctMsg"></span><button class="btn-primary" id="pwSave" type="button">保存</button></div>
   </div>
 </div>
@@ -161,7 +187,8 @@
   accept=".pdf,.docx,.xlsx,.xlsm,.html,.htm,.md,.txt,.csv,.json">
 
 <script src="/assets/icons.js?v=20261106a"></script>
-<script src="/assets/app.js?v=20261112a"></script>
+<script src="/assets/keys.js?v=20261123a"></script>
+<script src="/assets/app.js?v=20261123a"></script>
 <script src="/assets/resources.js?v=20261106a"></script>
 <script src="/assets/upload.js?v=20261112a"></script>
 </body>

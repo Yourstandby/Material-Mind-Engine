@@ -957,6 +957,53 @@ a.btn-ghost[hidden] { display: none; }
 .acct-admin .btn-primary { justify-self: start; }
 .acct-note { font-size: 11px; color: var(--muted); min-height: 14px; }
 
+/* ───────── 管理员面板：模型接入密钥 ───────── */
+.modal-card.wide { width: min(720px, 100%); max-height: 88vh; overflow: auto; }
+.ak-badge { margin-left: 8px; letter-spacing: 0; text-transform: none; }
+.key-grid { display: grid; grid-template-columns: 104px 1fr; gap: 7px 10px; align-items: center; }
+.key-label { font-size: 11.5px; color: var(--muted); }
+.key-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#acctKeys .key-input {
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 11.5px; padding: 5px 8px;
+  color: var(--ink); background: var(--paper); border: 1px solid var(--rule-strong); border-radius: 4px;
+}
+#acctKeys .key-input::placeholder { font-family: var(--sans); font-size: 11.5px; color: var(--muted); }
+.key-state {
+  flex: none; font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.key-state.ok { color: var(--accent); }
+.key-state.bad { color: var(--danger); }
+.key-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0; }
+.key-actions .btn-primary, .key-actions .btn-ghost { justify-self: start; }
+.key-mini {
+  font: inherit; font-size: 11px; color: var(--ink-2); background: var(--paper);
+  border: 1px solid var(--rule-strong); border-radius: 3px; padding: 3px 7px; cursor: pointer;
+  white-space: nowrap;
+}
+.key-mini:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.key-mini.danger:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.key-mini:disabled { opacity: 0.45; cursor: default; }
+#acctKeys .key-issue { display: grid; grid-template-columns: 1.4fr 78px 1.5fr auto; gap: 8px; align-items: center; }
+#acctKeys .key-issue input, #acctKeys .key-issue select { width: 100%; }
+.key-row {
+  display: grid; grid-template-columns: 1fr 48px 104px 62px; gap: 10px; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--rule); font-size: 12px;
+}
+.key-row.head {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted);
+}
+.key-row.off { opacity: 0.55; }
+.key-row .kn { min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.key-row .kn small { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.key-row .num { font-family: var(--mono); font-size: 11.5px; text-align: right; }
+.key-new {
+  border: 1px solid var(--accent); border-radius: 4px; padding: 8px 10px; margin: 6px 0;
+  font-size: 11.5px; line-height: 1.8;
+}
+.key-new code { font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+
 /* ───────── 不准确反馈 ───────── */
 .t-actions .bad { color: var(--muted); }
 .t-actions .bad:hover { color: var(--accent); }

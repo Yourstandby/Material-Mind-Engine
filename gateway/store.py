@@ -111,6 +111,20 @@ def log(key_id: int, path: str, status: int, tokens: int, ms: int) -> None:
         )
 
 
+def usage_by_key(hours: int = 24) -> list[dict]:
+    """按 key 汇总一段时间内的调用量（管理页表格用，按 id 对齐）。"""
+    since = time.time() - hours * 3600
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT k.id AS id, COUNT(u.id) AS calls, "
+            "COALESCE(SUM(u.tokens),0) AS tokens, COALESCE(SUM(u.status >= 400),0) AS errors "
+            "FROM api_keys k LEFT JOIN usage u ON u.key_id = k.id AND u.at > ? "
+            "GROUP BY k.id",
+            (since,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def report(hours: int = 24, limit: int = 50) -> dict:
     since = time.time() - hours * 3600
     with _conn() as conn:

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Stre
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from core import apikeys
 from core import auth, embeddings
 from core import access
 from core import applications
@@ -837,6 +838,67 @@ def api_user_reset(uid: int, body: ResetIn, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {"ok": True}
+
+
+class EnvIn(BaseModel):
+    values: dict[str, str] = {}
+
+
+class KeyTestIn(BaseModel):
+    target: str = "llm"
+
+
+class GatewayKeyIn(BaseModel):
+    name: str = ""
+    rpm: int = 120
+    apply_scope: str = ""
+
+
+@app.get("/api/apikeys")
+def api_apikeys(request: Request, hours: int = 24):
+    """当前接入状态 + 网关下游 Key 与用量（管理员）。"""
+    _require_admin(request)
+    return {**apikeys.status(), "gateway": apikeys.gateway_state(hours)}
+
+
+@app.post("/api/apikeys/env")
+def api_apikeys_env(body: EnvIn, request: Request):
+    """改接入配置：写 .env 并热更新进程环境变量，返回最新（脱敏）状态。"""
+    _require_admin(request)
+    try:
+        return {**apikeys.apply(body.values), "gateway": apikeys.gateway_state(24)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/apikeys/test")
+def api_apikeys_test(body: KeyTestIn, request: Request):
+    """连通性自检：真打一次上游，返回耗时与可用模型 / 向量维度。"""
+    _require_admin(request)
+    return apikeys.test(body.target)
+
+
+@app.post("/api/apikeys/gateway")
+def api_apikeys_gateway_new(body: GatewayKeyIn, request: Request):
+    """签发下游 Key；明文只在这一响应里出现一次。"""
+    _require_admin(request)
+    try:
+        issued = apikeys.create_gateway_key(body.name, body.rpm, body.apply_scope)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {**issued, "gateway": apikeys.gateway_state(24)}
+
+
+@app.post("/api/apikeys/gateway/{key_id}/revoke")
+def api_apikeys_gateway_revoke(key_id: str, request: Request):
+    _require_admin(request)
+    try:
+        done = apikeys.revoke_gateway_key(key_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not done:
+        raise HTTPException(status_code=404, detail="Key 不存在")
+    return {"ok": True, "gateway": apikeys.gateway_state(24)}
 
 
 @app.get("/login")
