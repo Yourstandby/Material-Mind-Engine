@@ -14,6 +14,7 @@ from core import catalog
 from core import embeddings
 from core import access
 from core import applications
+from core import hybrid
 from core import vector_store as vs
 from core.config import env
 from core.llm import client as llm_client, model_name
@@ -445,6 +446,50 @@ def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
     return picked[:top_k]
 
 
+def _hybrid_merge(question, collection_name, rows, ids, suppliers=None, access_allowed=None):
+    """稠密候选 + BM25 候选 → RRF 融合 → 可选 cross-encoder 重排。
+
+    任何一步失败都原样返回稠密结果：词法索引损坏不应该让检索整体挂掉。
+    """
+    if not hybrid.enabled() or not rows:
+        return rows
+    try:
+        lexical = hybrid.bm25(collection_name, question, limit=hybrid.bm25_candidates())
+    except Exception:  # noqa: BLE001 - 索引不可用时退回纯向量
+        return rows
+    if suppliers:
+        lexical = [
+            hit for hit in lexical
+            if str((hit["meta"] or {}).get("supplier") or "") in suppliers
+        ]
+    if access_allowed is not None:
+        lexical = [hit for hit in lexical if access.meta_allowed(hit["meta"], access_allowed)]
+    if not lexical:
+        return rows
+
+    pool = {rid: row[:3] for rid, row in zip(ids, rows) if rid}
+    for hit in lexical:
+        pool.setdefault(hit["id"], (hit["text"], hit["meta"], None))
+
+    vector_weight, lexical_weight = hybrid.weights()
+    fused = hybrid.rrf(
+        [list(ids), [hit["id"] for hit in lexical]],
+        k=hybrid.rrf_k(),
+        weights=[vector_weight, lexical_weight],
+    )
+    merged = []
+    for rank, (rid, _score) in enumerate(fused):
+        row = pool.get(rid)
+        if row is None:
+            continue
+        merged.append((row[0], row[1] or {}, row[2], rank))
+    if not merged:
+        return rows
+    if hybrid.rerank_enabled():
+        merged = hybrid.rerank_rows(question, merged)
+    return merged
+
+
 def retrieve_scored(
     question: str,
     collection: str = CATALOG,
@@ -508,24 +553,32 @@ def retrieve_scored(
     else:
         result = store.query(query_texts=[query], **kwargs)
 
+    ids = (result.get("ids") or [[]])[0]
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
     dists = (result.get("distances") or [[]])[0]
 
-    rows = []
+    # 过滤在构造阶段做，行与 id 保持一一对应（融合要按 id 对齐两路候选）
+    rows, kept_ids = [], []
     for index, (doc, meta) in enumerate(zip(docs, metas)):
         distance = dists[index] if index < len(dists) else None
         score = round(1 / (1 + float(distance)), 4) if distance is not None else None
+        meta = meta or {}
+        if allowed is not None and not access.meta_allowed(meta, allowed):
+            continue
+        if app_filter and not applications.matches(meta, industry or "", part or "", medium or ""):
+            continue
         rows.append((doc, meta, score, index))
+        kept_ids.append(str(ids[index]) if index < len(ids) else "")
 
-    if allowed is not None:
-        rows = [row for row in rows if access.meta_allowed(row[1], allowed)]
-
-    if app_filter:
-        rows = [
-            row for row in rows
-            if applications.matches(row[1] or {}, industry or "", part or "", medium or "")
-        ]
+    rows = _hybrid_merge(
+        question,
+        _resolve(collection),
+        rows,
+        kept_ids,
+        suppliers=suppliers,
+        access_allowed=allowed,
+    )
     rows = _diversify_rows(_rerank_rows(question, rows), top_k)
     return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]
 
@@ -1218,6 +1271,10 @@ def delete_source(collection: str, source: str) -> int:
     ]
     if ids:
         store.delete(ids=ids)
+        try:
+            hybrid.delete(_resolve(collection), ids)
+        except Exception:  # noqa: BLE001 - 词法索引清理失败不影响删除结果
+            pass
     return len(ids)
 
 

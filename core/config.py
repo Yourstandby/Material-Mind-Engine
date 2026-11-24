@@ -29,6 +29,13 @@ WANTED = (
     "EMBEDDING_MODEL",
     "EMBEDDING_DIM",
     "CHROMA_PATH",
+    "HYBRID_ENABLED",
+    "HYBRID_DB",
+    "RERANK_ENABLED",
+    "RERANK_BASE_URL",
+    "RERANK_API_KEY",
+    "RERANK_MODEL",
+    "RERANK_TOP_N",
 )
 
 # 已知服务商的默认端点与模型

@@ -20,6 +20,7 @@ from core import auth, embeddings
 from core import access
 from core import applications
 from core import failures
+from core import hybrid
 from core import vector_store as vs
 from core.config import env, status as config_status
 from core.query_engine import (
@@ -142,7 +143,12 @@ def api_applications(request: Request):
 
 @app.get("/api/health")
 def health():
-    return {**config_status(), "embedding": embeddings.status(), "chroma": vs.health()}
+    return {
+        **config_status(),
+        "embedding": embeddings.status(),
+        "chroma": vs.health(),
+        "hybrid": hybrid.health(),
+    }
 
 
 @app.post("/api/ingest")

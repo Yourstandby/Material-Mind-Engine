@@ -14,6 +14,7 @@ import chromadb
 
 from core import catalog, embeddings
 from core import applications
+from core import hybrid
 from core import vector_store as vs
 from core.config import env
 from core.query_engine import FIELDS as FIELD_LABELS
@@ -121,6 +122,10 @@ def _store_passages(collection: str, passages: list[dict], doc_id: str, material
         store.upsert(
             ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings.embed(documents)
         )
+        try:
+            hybrid.index(_passage_collection(collection), list(zip(ids, documents, metadatas)))
+        except Exception as exc:  # noqa: BLE001 - 词法索引失败不影响片段入库
+            _log(f"  片段 BM25 索引写入失败: {type(exc).__name__}: {exc}")
         return len(items)
     except Exception as exc:  # noqa: BLE001 - 片段入库失败不应丢掉已抽到的记录
         _log(f"  原文片段入库失败: {type(exc).__name__}: {exc}")
@@ -536,14 +541,14 @@ def ingest(
         return
 
     if documents:
-        store.upsert(
-            ids=ids,
-            documents=documents,
-            metadatas=[
-                _meta(r, did, material_hint, str(doc_meta.get("doc_type") or "")) for r in keep
-            ],
-            embeddings=vectors,
-        )
+        metadatas = [
+            _meta(r, did, material_hint, str(doc_meta.get("doc_type") or "")) for r in keep
+        ]
+        store.upsert(ids=ids, documents=documents, metadatas=metadatas, embeddings=vectors)
+        try:
+            hybrid.index(collection, list(zip(ids, documents, metadatas)))
+        except Exception as exc:  # noqa: BLE001 - 词法索引坏了也要先把记录入库
+            _log(f"  BM25 索引写入失败（检索退化为纯向量）: {type(exc).__name__}: {exc}")
     if not known:  # 旧库没有元数据时补写，防止查询回退到默认嵌入
         try:
             store.modify(metadata={"embedding_model": model})
