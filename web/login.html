@@ -52,16 +52,16 @@
   }
   input {
     width: 100%; font: inherit; font-size: 13.5px; color: var(--ink);
-    background: var(--paper); border: 1px solid var(--rule-strong);
+    background: var(--surface); border: 1px solid var(--rule-strong);
     border-radius: 4px; padding: 9px 11px; transition: border-color .14s, background .14s;
   }
-  input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+  input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(22,84,74,.1); }
   .cta {
     width: 100%; margin-top: 4px; font: inherit; font-size: 13px; color: #fff;
-    background: var(--ink); border: 1px solid var(--ink); border-radius: 4px;
+    background: var(--ink); border: 1px solid var(--ink); border-radius: 9px;
     padding: 10px; cursor: pointer; transition: background .14s, transform .1s;
   }
-  .cta:hover { background: #26241d; }
+  .cta:hover { opacity: .88; }
   .cta:active { transform: scale(0.995); }
   .cta:disabled { opacity: .55; cursor: default; }
   .msg { min-height: 18px; margin-top: 12px; font-size: 12px; color: var(--danger); line-height: 1.6; }

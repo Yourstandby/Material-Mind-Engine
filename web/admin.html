@@ -4,106 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>未命中看板 · Material Mind Engine</title>
-<link rel="stylesheet" href="/assets/style.css?v=20261031b">
-<style>
-  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); }
-  .adm { max-width: 940px; margin: 0 auto; padding: 40px 28px 80px; }
-  .adm-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  .adm h1 { font-family: var(--serif); font-weight: 400; font-size: 26px; letter-spacing: -0.02em; margin: 0; }
-  .adm-sub { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.8; }
-  .adm a { color: var(--accent); text-decoration: none; font-size: 12px; }
-  .adm a:hover { text-decoration: underline; }
-  .stats { display: flex; gap: 26px; margin: 26px 0 6px; flex-wrap: wrap; }
-  .stat-n { font-family: var(--mono); font-size: 22px; letter-spacing: -0.02em; }
-  .stat-l { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; }
-  .sec-t {
-    font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; color: var(--muted);
-    text-transform: uppercase; margin: 34px 0 12px; padding-bottom: 8px;
-    border-bottom: 1px solid var(--rule);
-  }
-  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
-  .chip {
-    font-size: 11.5px; color: var(--ink-2); background: var(--surface);
-    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 9px;
-  }
-  .chip b { font-family: var(--mono); font-size: 10px; color: var(--accent); margin-left: 6px; }
-  .miss-row {
-    display: grid; grid-template-columns: 1fr 54px 120px 74px 78px; gap: 12px;
-    align-items: center; padding: 11px 0; border-bottom: 1px solid var(--rule);
-    font-size: 12.5px;
-  }
-  .miss-row.head { color: var(--muted); font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; }
-  .miss-q { min-width: 0; overflow-wrap: anywhere; line-height: 1.6; }
-  .miss-n { font-family: var(--mono); font-size: 12px; color: var(--accent); text-align: right; }
-  .miss-t, .miss-tag { font-size: 11px; color: var(--muted); }
-  .miss-row button {
-    font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--surface);
-    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 8px; cursor: pointer;
-    transition: border-color .14s, color .14s;
-  }
-  .miss-row button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-  .miss-row button:disabled { opacity: .5; cursor: default; }
-  .empty { padding: 26px 0; font-size: 12.5px; color: var(--muted); }
-  .toast {
-    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
-    background: var(--ink); color: var(--paper); font-size: 12px; padding: 8px 14px;
-    border-radius: 4px; opacity: 0; transition: opacity .18s; pointer-events: none;
-  }
-  .toast.on { opacity: 1; }
-  /* 分级：游客可读级别 + 每份资料的等级 */
-  .tier-chip { cursor: pointer; user-select: none; }
-  .tier-chip.on { border-color: var(--accent); color: var(--accent); background: rgba(0,0,0,0.02); }
-  .tier-row {
-    display: grid; grid-template-columns: 1fr 150px 96px; gap: 12px; align-items: center;
-    padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 12.5px;
-  }
-  .tier-row.head { color: var(--muted); font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; }
-  .tier-name { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
-  .tier-name small { display: block; color: var(--muted); font-size: 11px; }
-  .tier-row select, .adm select {
-    font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--surface);
-    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 6px; cursor: pointer;
-  }
-  .folder-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
-  .folder-bar .btn {
-    font: inherit; font-size: 11.5px; color: var(--ink-2); background: var(--surface);
-    border: 1px solid var(--rule-strong); border-radius: 3px; padding: 4px 9px; cursor: pointer;
-    transition: border-color .14s, color .14s;
-  }
-  .folder-bar .btn:hover { border-color: var(--accent); color: var(--accent); }
-</style>
+<link rel="stylesheet" href="/assets/style.css?v=20261124c">
 </head>
-<body>
+<body class="adm-body">
 <div class="adm">
-  <div class="adm-top">
-    <div>
+  <header class="adm-top">
+    <div class="adm-headtext">
+      <span class="adm-kicker">Material Mind Engine</span>
       <h1>未命中看板</h1>
       <p class="adm-sub">库里没有资料的提问 + 用户主动催的资料。补完资料后点「已补」，该问题即从看板移除。</p>
     </div>
-    <a href="/">← 返回对话</a>
-  </div>
+    <a class="btn-ghost adm-back" href="/">← 返回对话</a>
+  </header>
 
   <div class="stats" id="adbStats"></div>
 
-  <div class="sec-t">资料可见级别</div>
-  <p class="adm-sub" style="margin:0 0 10px">级别 = 最低可见角色，单向包含：游客可见 ⊃ 登录用户可见 ⊃ 仅管理员。新投喂默认「仅管理员」，已入库的可逐份或按文件夹调；历史资料按「游客可见」处理。</p>
-  <div class="folder-bar">
-    <span class="miss-t">新投喂默认：</span>
-    <select id="adbDefault"></select>
-    <span class="miss-t">按文件夹批量：</span>
-    <select id="adbFolder"><option value="">选文件夹…</option></select>
-    <select id="adbLevelPick"></select>
-    <button type="button" id="adbFolderGo" class="btn">应用到整个文件夹</button>
-  </div>
-  <div id="adbDocs"><div class="empty">加载中…</div></div>
+  <section class="adm-card">
+    <div class="adm-card-head">
+      <h2>资料可见级别</h2>
+      <span class="adm-hint">级别 = 最低可见角色，单向包含：游客可见 ⊃ 登录用户可见 ⊃ 仅管理员</span>
+    </div>
+    <div class="folder-bar">
+      <label class="adm-field"><span>新投喂默认</span><select id="adbDefault"></select></label>
+      <label class="adm-field"><span>按文件夹批量</span><select id="adbFolder"><option value="">选文件夹…</option></select></label>
+      <label class="adm-field"><span>设为</span><select id="adbLevelPick"></select></label>
+      <button type="button" id="adbFolderGo" class="btn">应用到整个文件夹</button>
+    </div>
+    <div id="adbDocs"><div class="empty">加载中…</div></div>
+  </section>
 
-  <div class="sec-t">该补哪些资料</div>
-  <div class="chips" id="adbWanted"><span class="empty">加载中…</span></div>
+  <section class="adm-card">
+    <div class="adm-card-head">
+      <h2>该补哪些资料</h2>
+      <span class="adm-hint">按未命中问题里出现的关键词聚合，出现越多越该补</span>
+    </div>
+    <div class="chips" id="adbWanted"><span class="empty">加载中…</span></div>
+  </section>
 
-  <div class="sec-t">未命中问题</div>
-  <div id="adbList"><div class="empty">加载中…</div></div>
+  <section class="adm-card">
+    <div class="adm-card-head">
+      <h2>未命中问题</h2>
+      <span class="adm-hint">「用户催」为用户主动上报，「自动记录」为检索无结果</span>
+    </div>
+    <div id="adbList"><div class="empty">加载中…</div></div>
+  </section>
 </div>
 <div class="toast" id="adbToast"></div>
-<script src="/assets/admin.js?v=20261112b"></script>
+<script src="/assets/admin.js?v=20261124c"></script>
 </body>
 </html>
