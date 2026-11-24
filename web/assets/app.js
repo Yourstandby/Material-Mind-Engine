@@ -510,10 +510,14 @@ function renderCompare(p) {
           }</div>`;
         })
         .join("");
+      const shared = (group.shared_with || []).length
+        ? `<span class="cmp-shared" title="与 ${esc((group.shared_with || []).join("、"))} 数值完全相同，可能同源">同源 · ${esc((group.shared_with || []).join("、"))}</span>`
+        : "";
       return `<article class="cmp-card">
         <header class="cmp-card-head">
           <h4 class="cmp-product">${esc(group.product || "未标产品")}</h4>
           <span class="cmp-rec-count">${(group.records || []).length} 条记录</span>
+          ${shared}
         </header>
         ${records}
       </article>`;
@@ -531,7 +535,7 @@ function renderCompare(p) {
     ${conclusion ? `<div class="cmp-conclusion"><span class="cmp-badge">结论</span><span>${esc(conclusion)}</span>${refChips(p.conclusion_refs)}</div>` : ""}
     <div class="cmp-body">${cards}</div>
     <footer class="cmp-foot">
-      <span>数值取自库内记录，未推断、未换算；点引用编号可核对原文。</span>
+      <span>数值取自库内记录；缺单位的按字段补齐单位，未换算、未推断；点引用编号可核对原文。</span>
       ${notes.map((n) => `<span class="cmp-note">${esc(n)}</span>`).join("")}
     </footer>
   </section>`;

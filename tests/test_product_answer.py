@@ -1,8 +1,11 @@
 """目标产品解析 + 结构化对比的回归测试（不联网、不碰 Chroma）。"""
 
+import re
+
 import pytest
 
 from core import query_engine as qe
+from core import values as value_parser
 
 PRODUCTS = [
     {
@@ -174,3 +177,118 @@ def test_answer_skips_document_questions():
 
 def test_answer_skips_unknown_products():
     assert qe.answer_by_products("SKF 的轴承型号") is None
+
+
+# ---- 卡片质量：碎片合并 / 单位补齐 / 同源标注 / 区间跨度 ----
+
+FRAGMENT = {
+    "product_id": "p1",
+    "product_name": "Perlast G75M",
+    "supplier": "Perlast",
+    "grade": "G75M",
+    "material": "FFKM",
+    "test_temp": "232",
+    "source": "a.pdf p.1",
+}
+FRAGMENT_2 = {
+    "product_id": "p1",
+    "product_name": "Perlast G75M",
+    "supplier": "Perlast",
+    "grade": "G75M",
+    "material": "FFKM",
+    "test_temp": "232",
+    "test_duration": "168 h",
+    "source": "a.pdf p.1",
+}
+
+
+def test_fragments_merge_into_one_record():
+    """同一份资料被切成多个 chunk，卡片上应该只算一条记录。"""
+    merged = qe._merge_fragments([FRAGMENT, FRAGMENT_2], ["test_temp", "test_duration"], [])
+    assert len(merged) == 1
+    assert set(merged[0]["cells"]) == {"test_temp", "test_duration"}
+    assert len(merged[0]["metas"]) == 2
+
+
+def test_conflicting_fragments_stay_apart():
+    """重叠字段值不同 = 不同测试条件，不能并成伪冲突。"""
+    other = dict(FRAGMENT_2, test_duration="24 h")
+    merged = qe._merge_fragments([FRAGMENT_2, other], ["test_temp", "test_duration"], [])
+    assert len(merged) == 2
+
+
+def test_bare_number_gets_unit_from_field():
+    assert value_parser.display("232", "test_temp") == "232 °C"
+    assert value_parser.display("168", "test_duration") == "168 h"
+    assert value_parser.parse("-20~230°C", "temp_range")["text"] == "-20 ~ 230 °C"
+
+
+def test_unparsable_value_keeps_original_text():
+    assert value_parser.display("室温", "test_temp") == "室温"
+    assert value_parser.parse("室温", "test_temp")["numeric"] is False
+
+
+def test_out_of_range_number_is_not_guessed():
+    """越界数字不猜单位：5000 不可能是温度，宁可留裸值。"""
+    assert value_parser.parse("5000", "test_temp")["unit"] is None
+
+
+def test_range_echo_of_test_temp_is_dropped():
+    cells = qe._drop_echo_cells({"temp_range": "232 °C", "test_temp": "232 °C"})
+    assert "temp_range" not in cells
+    assert cells["test_temp"] == "232 °C"
+
+
+def test_real_range_is_kept():
+    cells = qe._drop_echo_cells({"temp_range": "-20 ~ 230 °C", "test_temp": "232 °C"})
+    assert "temp_range" in cells
+
+
+def test_extreme_uses_range_bound_not_first_number():
+    """-20~230°C 问最高耐温要答 230，不能答 -20。"""
+    assert value_parser.extreme("-20~230°C", "temp_range", True) == 230
+
+
+def test_conclusion_for_span_question():
+    direct = qe.answer_by_products("FFKM 耐高温低温的差距")
+    assert direct is not None
+    assert "跨度" in direct["text"]
+
+
+def test_payload_marks_shared_source():
+    """数值完全相同的牌号要能识别为同源，而不是两家各自验证过。"""
+    result = {
+        "products": [{"product_id": "p1", "product_name": "A"}, {"product_id": "p2", "product_name": "B"}],
+        "columns": [{"key": "test_temp", "label": "测试温度"}],
+        "rows": [
+            {"product": "A", "cells": {"test_temp": ["232 °C"]}, "metas": [{}]},
+            {"product": "B", "cells": {"test_temp": ["232 °C"]}, "metas": [{}]},
+        ],
+        "reason": "material",
+        "total": 2,
+    }
+    groups = qe.compare_payload(result)["groups"]
+    assert groups[0]["shared_with"] == ["B"]
+    assert groups[1]["shared_with"] == ["A"]
+
+
+def test_single_product_has_no_shared_mark():
+    result = {
+        "products": [{"product_id": "p1", "product_name": "A"}],
+        "columns": [{"key": "test_temp", "label": "测试温度"}],
+        "rows": [{"product": "A", "cells": {"test_temp": ["232 °C"]}, "metas": [{}]}],
+        "reason": "material",
+        "total": 1,
+    }
+    assert qe.compare_payload(result)["groups"][0]["shared_with"] == []
+
+
+def test_payload_cards_have_unit_everywhere():
+    direct = qe.answer_by_products("FFKM 压缩永久变形")
+    for group in direct["payload"]["groups"]:
+        for record in group["records"]:
+            for field in record["fields"]:
+                assert field["label"]
+                if field["key"] in ("temp_range", "test_temp", "test_duration", "cs"):
+                    # 数值字段必须带单位，裸数字上卡片就是本轮要修的病
+                    assert not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", field["value"].strip()), field

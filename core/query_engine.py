@@ -18,6 +18,7 @@ from core import hybrid
 from core import vector_store as vs
 from core.config import env
 from core.llm import client as llm_client, model_name, reasoning_effort
+from core import values as value_parser
 from core.normalize import localize
 
 PERSIST = env("CHROMA_PATH", "./chroma_db")
@@ -208,6 +209,7 @@ FIELDS = [
     ("parts", "部件"),
     ("media", "介质"),
     ("certs", "认证"),
+    ("certifications", "认证"),
     ("temp_range", "温度范围"),
     ("cs", "压缩永久变形"),
     ("chem_resistance", "耐化学性"),
@@ -891,6 +893,10 @@ FIELD_HINTS = (
 COMPARE_WORDS = ("对比", "比较", "哪个", "最高", "最低", "最大", "最小", "最好", "最差", "分别", "排序")
 MAX_UP_WORDS = ("最高", "最大", "最好", "最强")
 MAX_DOWN_WORDS = ("最低", "最小", "最差", "最弱")
+# 「差距 / 跨度」类问题算区间宽度，不是求单个极值
+SPAN_WORDS = ("差距", "差多少", "相差", "跨度", "范围多", "相差多少", "差几")
+# 卡片骨架列：问题没点名也要建，否则卡片出来是残的
+SKELETON = ("temp_range", "test_temp", "test_duration")
 
 # 出现在配方段落里的组分，不是可比较的产品
 NON_PRODUCT_MARKS = (
@@ -1071,11 +1077,12 @@ def _product_rows(product_ids: set, names: set) -> list:
     return rows
 
 
-def _cell(value) -> str:
-    """单表格单元：本地化、去竖线（否则表格列会错位）、压成一行。"""
+def _cell(value, field: str = "") -> str:
+    """单表格单元：本地化 → 数值结构化 → 去竖线（否则表格列会错位）→ 压成一行。"""
     if value is None:
         return ""
-    text = localize(str(value)).replace("|", "、").replace("\r", " ")
+    text = value_parser.display(value, field)
+    text = text.replace("|", "、").replace("\r", " ")
     return re.sub(r"\s*\n\s*", " ", text).strip()
 
 
@@ -1088,16 +1095,78 @@ def _dedupe_key(value: str) -> str:
     return _tidy(text)
 
 
-def _num(value) -> float | None:
+def _compatible(known: dict, candidate: dict) -> bool:
+    """两组单元能否并成一条记录：重叠字段值全相同才并。
+
+    没有重叠字段就没有合并依据，宁可分开；有重叠但值不同，说明是不同测试条件，
+    并起来就是伪冲突。
+    """
+    shared = set(known) & set(candidate)
+    if not shared:
+        return False
+    return all(_dedupe_key(known[column]) == _dedupe_key(candidate[column]) for column in shared)
+
+
+def _drop_echo_cells(cells: dict) -> dict:
+    """去掉「温度范围」跟「测试温度」说同一件事的重复格。
+
+    抽取常把单值温度同时填进两列（232°C 既当范围又当测试温度），卡片上看着像两条
+    独立数据。范围只该是真区间，单值重复就保留测试温度那格。
+    """
+    out = dict(cells)
+    for column in value_parser.RANGE_FIELDS:
+        if column not in out:
+            continue
+        parsed = value_parser.parse(out[column], column)
+        if not parsed or not parsed.get("numeric") or parsed["min"] != parsed["max"]:
+            continue
+        peer = value_parser.parse(out.get("test_temp") or "", "test_temp")
+        if peer and peer.get("numeric") and peer["min"] == parsed["min"]:
+            out.pop(column, None)
+    return out
+
+
+def _merge_fragments(metas: list, columns: list, asked=()) -> list:
+    """把同一产品下互相补全的 chunk 碎片并成一条记录。
+
+    同一份 datasheet 常被切进多个 chunk，每个只带两三个字段，逐 chunk 上表就会出现
+    「一个牌号 3 条记录、每条只剩两个字段」。按重叠字段值相同来并，能拼完整又不会
+    造出伪冲突。
+    """
+    groups: list = []
+    for meta in metas:
+        cells = {}
+        for column in columns:
+            cell = _cell(meta.get(column), column)
+            if cell:
+                cells[column] = cell
+        if not cells:
+            continue
+        # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
+        if asked and not any(column in cells for column in asked):
+            continue
+        for group in groups:
+            if _compatible(group["cells"], cells):
+                for column, value in cells.items():
+                    group["cells"].setdefault(column, value)
+                group["metas"].append(meta)
+                break
+        else:
+            groups.append({"cells": cells, "metas": [meta]})
+
+    out = []
+    for group in groups:
+        cells = _drop_echo_cells(group["cells"])
+        if cells:
+            out.append({"cells": cells, "metas": group["metas"]})
+    return out
+
+
+def _num(value, field: str = "", want_max: bool = True) -> float | None:
+    """比较用的数值：区间取上界/下界，而不是简单的「第一个数字」。"""
     if isinstance(value, (list, tuple)):
         value = value[0] if value else ""
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", str(value or ""))
-    if not match:
-        return None
-    try:
-        return float(match.group(0))
-    except ValueError:
-        return None
+    return value_parser.extreme(value, field, want_max)
 
 
 def compare_products(products: list, question: str, rows: list | None = None,
@@ -1126,6 +1195,12 @@ def compare_products(products: list, question: str, rows: list | None = None,
         if pattern.search(question or ""):
             asked.extend(key for key in keys if key not in asked)
     columns = [key for key in asked if key in present][:MAX_COLUMNS]
+    # 问题没点名也要把骨架列建出来，否则卡片是「有温度没时长」的残表
+    for key in SKELETON:
+        if len(columns) >= MAX_COLUMNS:
+            break
+        if key in present and key not in columns:
+            columns.append(key)
     for key in present:
         if len(columns) >= MAX_COLUMNS:
             break
@@ -1137,41 +1212,24 @@ def compare_products(products: list, question: str, rows: list | None = None,
     for item in picked:
         key = str(item.get("product_name") or "")
         metas = grouped.get(key) or grouped.get(str(item.get("product_id") or "")) or []
-        # 一行 = 一条库内记录。把同一产品的多条记录横向合并会把不同测试条件的
-        # 值拼成「200°C 与 -14°C 并存」「30 / 29」这种伪冲突，所以按记录分行。
-        records: list = []
-        seen_cells: set = set()
-        for meta in metas:
-            cells = {}
-            for column in columns:
-                cell = _cell(meta.get(column))
-                if cell:
-                    cells[column] = [cell]
-            if not cells:
-                continue
-            # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
-            if asked and not any(column in cells for column in asked):
-                continue
-            fingerprint = tuple(sorted((k, tuple(v)) for k, v in cells.items()))
-            if fingerprint in seen_cells:
-                continue
-            seen_cells.add(fingerprint)
-            records.append((meta, cells))
+        # 一条记录 = 一份资料里的一个测试条件。先把互相补全的 chunk 碎片并成一条，
+        # 再按「命中焦点字段多、字段齐」排序取前几条。
+        records = _merge_fragments(metas, columns, asked)
         if not records:
             continue
         records.sort(
-            key=lambda pair: (
-                -sum(1 for column in asked if column in pair[1]),
-                -len(pair[1]),
+            key=lambda record: (
+                -sum(1 for column in asked if column in record["cells"]),
+                -len(record["cells"]),
             )
         )
-        for meta, cells in records[:MAX_ROWS_PER_PRODUCT]:
+        for record in records[:MAX_ROWS_PER_PRODUCT]:
             table.append(
                 {
                     "product": key,
                     "product_id": item.get("product_id"),
-                    "cells": cells,
-                    "metas": [meta],
+                    "cells": {column: [value] for column, value in record["cells"].items()},
+                    "metas": record["metas"],
                 }
             )
 
@@ -1180,6 +1238,7 @@ def compare_products(products: list, question: str, rows: list | None = None,
         columns = [
             key for key in columns
             if key in asked
+            or key in SKELETON
             or sum(1 for row in table if row["cells"].get(key)) / len(table) >= 0.3
         ]
 
@@ -1193,16 +1252,45 @@ def compare_products(products: list, question: str, rows: list | None = None,
 
 
 def _conclusion(result: dict, question: str):
-    """求极值由代码算，不交给模型：只回答「哪个最高/最低」。"""
+    """求极值与区间跨度都由代码算，不交给模型。
+
+    「差距 / 差多少」这类问题问的是区间宽度，求极值答不了，单独走一条分支。
+    """
     want_max = any(word in question for word in MAX_UP_WORDS)
     want_min = any(word in question for word in MAX_DOWN_WORDS)
-    if want_max == want_min:
+    want_span = any(word in question for word in SPAN_WORDS) and not (want_max or want_min)
+    if not want_span and want_max == want_min:
         return "", None
     labels = {column["key"]: column["label"] for column in result["columns"]}
+
+    if want_span:
+        # 区间列优先，其次任何能拆出 min/max 的数值列
+        ordered = sorted(
+            result["columns"],
+            key=lambda column: column["key"] not in value_parser.RANGE_FIELDS,
+        )
+        for column in ordered:
+            best = None
+            for row in result["rows"]:
+                parsed = value_parser.parse((row["cells"].get(column["key"]) or [""])[0], column["key"])
+                width = value_parser.span(parsed)
+                if width is None:
+                    continue
+                if best is None or width > best[0]:
+                    best = (width, row, parsed)
+            if best:
+                width, row, parsed = best
+                label = labels.get(column["key"], column["key"])
+                return (
+                    f"结论: {row['product']} {label} {parsed['text']}，跨度 {width:g} {parsed.get('unit') or ''}".strip(),
+                    row,
+                )
+        return "", None
+
     for column in result["columns"]:
         best = None
         for row in result["rows"]:
-            value = _num(row["cells"].get(column["key"]))
+            value = _num(row["cells"].get(column["key"]), column["key"], want_max)
             if value is None:
                 continue
             if best is None or (value > best[0] if want_max else value < best[0]):
@@ -1323,6 +1411,20 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
             by_product[product] = group
             groups.append(group)
         group["records"].append({"fields": fields, "refs": refs})
+
+    # 跨牌号同源值：两个牌号所有数值完全一致，多半是同一份 datasheet 被挂到了多个
+    # 牌号上，不是两家真做了同样的测试。前端据此加「同源」角标，别当成两边都验证过。
+    signatures: dict = {}
+    for group in groups:
+        signature = tuple(
+            sorted((field["key"], field["value"]) for record in group["records"] for field in record["fields"])
+        )
+        signatures.setdefault(signature, []).append(group["product"])
+    for group in groups:
+        signature = tuple(
+            sorted((field["key"], field["value"]) for record in group["records"] for field in record["fields"])
+        )
+        group["shared_with"] = [name for name in signatures.get(signature, []) if name != group["product"]]
 
     conclusion, conclusion_refs = "", []
     text, row = _conclusion(result, question)
