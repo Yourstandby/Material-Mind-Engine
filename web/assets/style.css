@@ -1180,6 +1180,16 @@ button.busy, .busy { opacity: 0.6; cursor: progress; }
 }
 .answer .tbl td { white-space: normal; min-width: 92px; vertical-align: top; }
 .answer .tbl td.num { text-align: right; font-family: var(--mono); }
+.answer .tbl { width: 100%; }
+.answer .tbl th {
+  padding: 10px 14px; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.answer .tbl td { padding: 11px 14px; }
+.answer .tbl th.num { text-align: right; }
+.answer .tbl td:first-child { font-weight: 550; }
+.answer .tbl td.num .cite { margin-left: 0; }
+.answer .tbl tbody tr:hover td { background: var(--surface-2); }
 .answer .tbl tbody tr:last-child td { border-bottom: 0; }
 
 .t-actions { flex-wrap: wrap; }

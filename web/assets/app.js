@@ -136,12 +136,25 @@ function renderMD(md) {
         while (c.length < head.length) c.push("");
         return c.slice(0, head.length);
       };
+      const body = rows.map(norm);
+      // 末列如果全是引用编号，就别再顶着「测试条件」的表头
+      const refOnly = body.every((r) => /^\[?\d+\]?$/.test((r[r.length - 1] || "").trim() || "x"));
+      const heads = head.slice();
+      if (refOnly) heads[heads.length - 1] = "引用";
       html +=
-        '<div class="tbl"><table><thead><tr>' +
-        head.map((c) => `<th>${c}</th>`).join("") +
+        '<div class="tbl-scroll"><table class="tbl"><thead><tr>' +
+        heads.map((c, idx) => `<th${idx === heads.length - 1 && refOnly ? ' class="num"' : ""}>${c}</th>`).join("") +
         "</tr></thead><tbody>" +
-        rows
-          .map((r) => "<tr>" + norm(r).map((c) => `<td>${c ? inline(c) : "—"}</td>`).join("") + "</tr>")
+        body
+          .map(
+            (r) =>
+              "<tr>" +
+              r.map((c, idx) => {
+                const num = /^[-+]?[\d.,%°]/.test(c) || (refOnly && idx === r.length - 1);
+                return `<td${num ? ' class="num"' : ""}>${c ? inline(c) : "—"}</td>`;
+              }).join("") +
+              "</tr>"
+          )
           .join("") +
         "</tbody></table></div>";
       continue;
@@ -362,7 +375,19 @@ function toolRow(s) {
   </div>`;
 }
 
+// 后端会把同一阶段先后推两次（run → done），合并成一条，别在 UI 里排两个「向量召回」
+function mergeStages(items) {
+  const merged = new Map();
+  for (const item of items) {
+    const key = item.id || item.label;
+    const prev = merged.get(key);
+    merged.set(key, prev ? { ...prev, ...item, label: item.label || prev.label } : item);
+  }
+  return [...merged.values()];
+}
+
 function renderStages(t, items) {
+  items = mergeStages(items || []);
   if (!t.think || !items.length) return;
   t.think.hidden = false;
   const running = items.some((s) => s.state === "run");
@@ -694,7 +719,7 @@ async function ask(question) {
 
   const paint = () => {
     frame = 0;
-    t.body.innerHTML = renderMD(text) + '<span class="caret"></span>';
+    t.body.innerHTML = renderMD(text) + (text ? '<span class="caret"></span>' : "");
     scrollToBottom();
   };
 
