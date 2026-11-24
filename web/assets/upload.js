@@ -32,20 +32,23 @@ function toast(message, type = "info", ms = 4200) {
 function showUploader(clear = true) {
   const panel = document.getElementById("uploader");
   if (!panel) return;
-  panel.hidden = false;
   if (clear) {
     document.getElementById("upList").innerHTML = "";
     upState.rows.clear();
     upState.polling.clear();
   }
-  if (!document.querySelector("#upList .up-row") && !document.getElementById("upEmpty")) {
-    const empty = document.createElement("div");
-    empty.id = "upEmpty";
-    empty.className = "up-empty";
-    empty.textContent = "暂无入库任务。选择文件后，这里会显示解析、抽取和向量化进度。";
-    document.getElementById("upList").appendChild(empty);
-  }
   updateSummary();
+  syncUploader();
+}
+
+/* 队列面板只在真的存在入库任务时出现；空了就自动收起，不占右下角 */
+function syncUploader() {
+  const panel = document.getElementById("uploader");
+  if (!panel) return;
+  const hasRow = !!document.querySelector("#upList .up-row");
+  panel.hidden = !hasRow || !!upState.dismissed;
+  const empty = document.getElementById("upEmpty");
+  if (!hasRow && empty) empty.remove();
 }
 
 function updateSummary() {
@@ -62,6 +65,9 @@ function updateSummary() {
 function addRow(name, size, collection) {
   const empty = document.getElementById("upEmpty");
   if (empty) empty.remove();
+  const panel = document.getElementById("uploader");
+  if (panel) panel.hidden = false;
+  upState.dismissed = false;
   const row = document.createElement("div");
   row.className = "up-row";
   row.innerHTML = `
@@ -323,9 +329,9 @@ async function restoreJobs(force = false) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     items = (await res.json()).items || [];
   } catch (err) {
-    showUploader(false);
-    const empty = document.getElementById("upEmpty");
-    if (empty) empty.textContent = `无法读取入库进度（${err.message}）。请确认已重启 Web 服务。`;
+    // 读不到进度时不要凭空弹出面板，任务条数未知就不打扰
+    syncUploader();
+    if (force) toast(`无法读取入库进度：${err.message}`, "error");
     return;
   }
   const recent = items.filter(
@@ -335,7 +341,7 @@ async function restoreJobs(force = false) {
       Date.now() / 1000 - (job.updated_at || 0) < UP_RESTORE_MS / 1000
   );
   if (!recent.length) {
-    showUploader(false);
+    syncUploader();
     if (force) toast("暂无入库任务", "info");
     return;
   }
@@ -380,19 +386,25 @@ async function restoreJobs(force = false) {
   );
 
   if (btn && !upState.polling.size) btn.classList.remove("busy");
+  syncUploader();
   onJobSettled();
 }
 
 async function refreshQueue() {
-  showUploader(false);
   if (typeof loadFolders === "function") await loadFolders();
   await restoreJobs(true);
+  syncUploader();
 }
 
 /* ───────── 绑定 ───────── */
 
 (function initUploader() {
   const close = document.getElementById("upClose");
-  if (close) close.addEventListener("click", () => (document.getElementById("uploader").hidden = true));
+  if (close)
+    close.addEventListener("click", () => {
+      // 手动收起后不再自动弹出，直到有新任务进来
+      upState.dismissed = true;
+      document.getElementById("uploader").hidden = true;
+    });
   restoreJobs();
 })();
