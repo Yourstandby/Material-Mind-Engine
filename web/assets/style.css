@@ -589,7 +589,28 @@ kbd {
 .pick:hover { border-color: var(--accent); }
 .pick.on { background: var(--accent); border-color: var(--accent); }
 
-.res-name { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; min-width: 0; }
+.res-name { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 12px; min-width: 0; align-items: center; }
+.ficon {
+  width: 30px; height: 30px; border-radius: 9px; flex: none; align-self: center;
+  grid-row: 1 / span 2;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-3); color: var(--ink-2);
+  border: 1px solid transparent;
+  transition: transform 0.16s var(--ease), background 0.16s var(--ease);
+}
+.res-row:hover .ficon { transform: translateY(-1px); }
+.f-pdf { background: rgba(180, 52, 42, 0.1); color: #b4342a; border-color: rgba(180, 52, 42, 0.16); }
+.f-doc, .f-docx, .f-rtf, .f-odt { background: rgba(47, 90, 168, 0.1); color: #2f5aa8; border-color: rgba(47, 90, 168, 0.16); }
+.f-xls, .f-xlsx, .f-xlsm, .f-csv, .f-ods { background: rgba(35, 118, 79, 0.1); color: #23764f; border-color: rgba(35, 118, 79, 0.16); }
+.f-html, .f-htm, .f-json, .f-xml { background: rgba(138, 90, 18, 0.1); color: #8a5a12; border-color: rgba(138, 90, 18, 0.16); }
+.f-ppt, .f-pptx, .f-odp { background: rgba(160, 73, 31, 0.1); color: #a0491f; border-color: rgba(160, 73, 31, 0.16); }
+.f-png, .f-jpg, .f-jpeg, .f-webp, .f-tif, .f-tiff { background: rgba(107, 70, 160, 0.1); color: #6b46a0; border-color: rgba(107, 70, 160, 0.16); }
+[data-theme="dark"] .f-pdf { color: #f09084; }
+[data-theme="dark"] .f-doc, [data-theme="dark"] .f-docx, [data-theme="dark"] .f-rtf, [data-theme="dark"] .f-odt { color: #9db9ea; }
+[data-theme="dark"] .f-xls, [data-theme="dark"] .f-xlsx, [data-theme="dark"] .f-xlsm, [data-theme="dark"] .f-csv, [data-theme="dark"] .f-ods { color: #86d3ab; }
+[data-theme="dark"] .f-html, [data-theme="dark"] .f-htm, [data-theme="dark"] .f-json, [data-theme="dark"] .f-xml { color: #e2bb7c; }
+[data-theme="dark"] .f-ppt, [data-theme="dark"] .f-pptx, [data-theme="dark"] .f-odp { color: #e7a887; }
+[data-theme="dark"] .f-png, [data-theme="dark"] .f-jpg, [data-theme="dark"] .f-jpeg, [data-theme="dark"] .f-webp, [data-theme="dark"] .f-tif, [data-theme="dark"] .f-tiff { color: #bda5ef; }
 .ext {
   font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--muted);
@@ -966,6 +987,16 @@ kbd {
 }
 
 /* ───────── 响应式 ───────── */
+
+/* 暗色下的文件图标：提亮底色，避免在深色面上糊成一团 */
+[data-theme="dark"] .brand-mark { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--rule-strong); }
+[data-theme="dark"] .f-pdf { color: #f09084; background: rgba(240, 144, 132, 0.14); border-color: rgba(240, 144, 132, 0.24); }
+[data-theme="dark"] .f-doc, [data-theme="dark"] .f-docx, [data-theme="dark"] .f-rtf, [data-theme="dark"] .f-odt { color: #9db9ea; background: rgba(157, 185, 234, 0.14); border-color: rgba(157, 185, 234, 0.24); }
+[data-theme="dark"] .f-xls, [data-theme="dark"] .f-xlsx, [data-theme="dark"] .f-xlsm, [data-theme="dark"] .f-csv, [data-theme="dark"] .f-ods { color: #86d3ab; background: rgba(134, 211, 171, 0.14); border-color: rgba(134, 211, 171, 0.24); }
+[data-theme="dark"] .f-html, [data-theme="dark"] .f-htm, [data-theme="dark"] .f-json, [data-theme="dark"] .f-xml { color: #e2bb7c; background: rgba(226, 187, 124, 0.14); border-color: rgba(226, 187, 124, 0.24); }
+[data-theme="dark"] .f-ppt, [data-theme="dark"] .f-pptx, [data-theme="dark"] .f-odp { color: #e7a887; background: rgba(231, 168, 135, 0.14); border-color: rgba(231, 168, 135, 0.24); }
+[data-theme="dark"] .f-png, [data-theme="dark"] .f-jpg, [data-theme="dark"] .f-jpeg, [data-theme="dark"] .f-webp, [data-theme="dark"] .f-tif, [data-theme="dark"] .f-tiff { color: #bda5ef; background: rgba(189, 165, 239, 0.14); border-color: rgba(189, 165, 239, 0.24); }
+
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .side {

@@ -239,6 +239,25 @@ function typeBadge(type) {
   return `<span class="type t-${key}">${TYPE_LABEL[key]}</span>`;
 }
 
+// 文件类型图标：色块 + 线性图标，比纯文字扩展名更好扫读
+const FILE_ICON = {
+  pdf: "filePdf",
+  doc: "fileDoc", docx: "fileDoc", rtf: "fileDoc", odt: "fileDoc",
+  xls: "fileSheet", xlsx: "fileSheet", xlsm: "fileSheet", csv: "fileSheet", ods: "fileSheet",
+  ppt: "fileSlides", pptx: "fileSlides", odp: "fileSlides",
+  html: "fileCode", htm: "fileCode", json: "fileCode", xml: "fileCode",
+  md: "fileDoc", markdown: "fileDoc", txt: "fileDoc",
+  png: "fileImage", jpg: "fileImage", jpeg: "fileImage", webp: "fileImage", tif: "fileImage", tiff: "fileImage",
+};
+
+function fileBadge(kind) {
+  const key = String(kind || "file").toLowerCase().replace(/^\./, "");
+  return `<span class="ficon f-${key}" title="${esc(key || "file")}">${icon(
+    FILE_ICON[key] || "file",
+    15
+  )}</span>`;
+}
+
 function renderResList() {
   const list = visibleSources();
   const total = list.reduce((sum, item) => sum + (item.records || 0), 0);
@@ -299,7 +318,7 @@ function renderResList() {
             on ? icon("check", 11) : ""
           }</span>
             <div class="res-name">
-              <span class="ext">${esc(item.kind || "file")}</span>
+              ${fileBadge(item.kind)}
               <span class="file" title="${esc(item.source)}">${esc(item.title || item.source)}</span>
               <span class="sub">${esc(sub || item.original_name || "")}</span>
             </div>
