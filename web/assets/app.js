@@ -269,7 +269,7 @@ function createTurn() {
   turn.className = "turn";
   turn.innerHTML = `
     <div class="t-meta"><span class="who">Material Mind</span><span class="stat">检索中…</span></div>
-    <div class="think"><div class="think-run"><span class="dot"></span><span>检索中…</span></div><ol class="think-list" hidden></ol></div>
+    <div class="think" hidden></div>
     <div class="answer"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     <div class="sources" hidden></div>`;
   $("#stack").appendChild(turn);
@@ -284,54 +284,120 @@ function createTurn() {
   };
 }
 
-/* 检索阶段：先逐行播出后端真实打点，再折叠成一行摘要，可点开还原 */
-function renderStages(t, items) {
-  if (!t.think || !items.length) return;
-  const run = t.think.querySelector(".think-run");
-  const list = t.think.querySelector(".think-list");
-  if (run) run.hidden = true;
-  list.hidden = false;
-  list.innerHTML = items
-    .map((s, i) => {
-      const mark = s.state === "skip" ? "·" : s.state === "run" ? "◐" : "✓";
-      const num = [s.detail, s.ms != null ? `${s.ms}ms` : ""]
-        .filter(Boolean)
-        .join(" · ");
-      return `<li class="${s.state === "skip" ? "skip" : ""}" style="animation-delay:${i * 45}ms">
-        <span class="mark ${s.state === "run" ? "run" : ""}">${mark}</span>
-        <span>${esc(s.label || "")}</span>
-        <span class="num">${esc(num)}</span></li>`;
-    })
-    .join("");
-  clearTimeout(t.thinkTimer);
-  t.thinkTimer = setTimeout(() => collapseStages(t, items), 420 + items.length * 45);
+/* 检索阶段：按「工具调用」呈现 —— 一个工具一位，折叠成人话摘要 */
+const STAGE_META = {
+  route: { name: "确定性路由", icon: "sparkle" },
+  vector: { name: "向量召回", icon: "layers" },
+  bm25: { name: "词法召回", icon: "search" },
+  rrf: { name: "结果融合", icon: "layers" },
+  rerank: { name: "重排", icon: "sparkle" },
+  table: { name: "结构化比对", icon: "database" },
+};
+
+// 后端 label 带实现细节（k=60、cross-encoder、模型名），展示层只留人话
+function stageName(s) {
+  const meta = STAGE_META[s.id];
+  if (meta) return meta.name;
+  return String(s.label || "步骤")
+    .split(" · ")[0]
+    .replace(/\s*k=\d+/gi, "")
+    .replace(/^cross-encoder\s*/i, "")
+    .trim();
 }
 
+function stageIconName(s) {
+  return (STAGE_META[s.id] || {}).icon || "layers";
+}
+
+// 跳过原因是环境变量名之类的实现细节，换成用户能读的说法
+const SKIP_TEXT = {
+  "RERANK_BASE_URL 未配置": "未启用重排",
+  "HYBRID_ENABLED=0": "未启用词法召回",
+  "仅向量结果": "只用向量结果",
+};
+
+// "10 候选" -> {value:"10", unit:"候选"}；"索引不可用" -> {value:"", unit:"索引不可用"}
+function stageMetric(s) {
+  const detail = String(s.detail || "");
+  const m = detail.match(/^([\d.,]+)\s*(.*)$/);
+  if (m) return { value: m[1], unit: m[2] };
+  return { value: "", unit: SKIP_TEXT[detail] || detail };
+}
+
+function stageRight(s) {
+  const metric = stageMetric(s);
+  const head = metric.value ? `${metric.value} ${metric.unit}`.trim() : metric.unit;
+  return [head, s.ms != null ? `${s.ms}ms` : ""].filter(Boolean).join(" · ");
+}
+
+function toolChip(s) {
+  const metric = stageMetric(s);
+  const skip = s.state === "skip";
+  return `<span class="tool-chip${skip ? " skip" : ""}${s.state === "run" ? " running" : ""}" title="${esc(
+    s.label || ""
+  )}"><span class="tool-ic">${icon(stageIconName(s), 12)}</span>${esc(stageName(s))}${
+    !skip && metric.value ? `<b>${esc(metric.value)}</b>` : ""
+  }</span>`;
+}
+
+function toolRow(s) {
+  const skip = s.state === "skip";
+  return `<div class="tool${skip ? " skip" : ""}${s.state === "run" ? " running" : ""}">
+    <span class="tool-ic">${icon(stageIconName(s), 13)}</span>
+    <span class="tool-name">${esc(stageName(s))}</span>
+    <span class="tool-detail">${esc(stageRight(s) || (s.state === "run" ? "进行中…" : ""))}</span>
+    <span class="tool-state">${skip ? "跳过" : s.state === "run" ? "进行中" : "完成"}</span>
+  </div>`;
+}
+
+function renderStages(t, items) {
+  if (!t.think || !items.length) return;
+  t.think.hidden = false;
+  const running = items.some((s) => s.state === "run");
+  t.think.innerHTML = `<div class="tools${running ? " running" : ""}">
+    <div class="tools-head">
+      <span class="tools-title">${running ? "检索中" : `${items.length} 个工具`}</span>
+      <span class="tools-chips">${items.map(toolChip).join("")}</span>
+    </div>
+    <div class="tools-list" hidden>${items.map(toolRow).join("")}</div>
+  </div>`;
+  clearTimeout(t.thinkTimer);
+  t.thinkTimer = setTimeout(() => collapseStages(t, items), 380 + items.length * 40);
+}
+
+// 折叠：只留一行摘要（工具名 + 命中数），点开是每个工具的明细
 function collapseStages(t, items) {
-  const list = t.think.querySelector(".think-list");
-  if (!list || list.hidden) return;
-  const skipped = items.filter((s) => s.state === "skip").map((s) => s.label);
-  const summary = items
-    .filter((s) => s.state !== "skip")
-    .map((s) => (s.detail ? `${s.label.split(" · ")[0]} ${s.detail}` : s.label))
-    .join(" · ");
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "think-done";
-  btn.innerHTML = `<span>${esc(summary || "检索完成")}${skipped.length ? `（${esc(skipped.join("、"))}未启用）` : ""}</span><span aria-hidden="true">⌄</span>`;
-  btn.addEventListener("click", () => {
-    btn.remove();
-    list.hidden = false;
+  const box = t.think.querySelector(".tools");
+  const list = box && box.querySelector(".tools-list");
+  if (!box || !list) return;
+  box.classList.remove("running");
+  const ms = items.reduce((sum, s) => sum + (s.ms || 0), 0);
+  box.querySelector(".tools-head").classList.add("clickable");
+  const title = box.querySelector(".tools-title");
+  title.textContent = `${items.length} 个工具`;
+  if (ms) {
+    const tail = document.createElement("span");
+    tail.className = "tools-ms";
+    tail.textContent = `${ms}ms`;
+    box.querySelector(".tools-head").appendChild(tail);
+  }
+  const chev = document.createElement("span");
+  chev.className = "tools-chev";
+  chev.setAttribute("aria-hidden", "true");
+  chev.textContent = "⌄";
+  box.querySelector(".tools-head").appendChild(chev);
+  box.querySelector(".tools-head").addEventListener("click", () => {
+    const open = list.hidden;
+    list.hidden = !open;
+    chev.classList.toggle("open", open);
   });
-  list.hidden = true;
-  t.think.appendChild(btn);
 }
 
 /* 没有阶段数据（结构化直达、报错）时不要把“检索中”留在界面上 */
 function finishThink(t) {
   if (!t.think) return;
   clearTimeout(t.thinkTimer);
-  if (!t.think.querySelector("li") && !t.think.querySelector(".think-done")) t.think.hidden = true;
+  if (!t.think.querySelector(".tools")) t.think.hidden = true;
 }
 
 function renderSources(container, items) {

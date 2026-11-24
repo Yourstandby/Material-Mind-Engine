@@ -275,33 +275,57 @@ kbd {
 }
 
 .think { font-size: 12.5px; color: var(--muted); }
-.think-run {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 9px;
-  background: var(--surface-2); border: 1px solid var(--rule);
+
+/* 工具调用式检索阶段 */
+.tools {
+  border: 1px solid var(--rule); border-radius: 10px;
+  background: var(--surface-2); overflow: hidden;
 }
-.think-run .dot { animation: blink 1.2s var(--ease) infinite; }
-@keyframes blink { 50% { opacity: 0.25; } }
-.think-list {
-  list-style: none; margin: 0; padding: 10px 14px;
-  border-left: 2px solid var(--rule-strong); display: flex; flex-direction: column; gap: 6px;
+.tools.running { border-color: var(--accent-line); }
+.tools-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; font-size: 11.5px; color: var(--ink-2);
 }
-.think-list li {
-  display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--ink-2);
-  animation: rise 0.24s var(--ease) both;
+.tools-head.clickable { cursor: pointer; }
+.tools-head.clickable:hover { background: var(--surface-3); }
+.tools-title { font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.tools.running .tools-title { color: var(--accent); }
+.tools.running .tools-title::before {
+  content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--accent); margin-right: 6px; vertical-align: 1px;
+  animation: blink 1.2s var(--ease) infinite;
 }
-.think-list li.skip { opacity: 0.45; }
-.think-list .mark { font-family: var(--mono); font-size: 10px; color: var(--accent); width: 12px; }
-.think-list .mark.run { color: var(--warn); }
-.think-list .num { margin-left: auto; font-size: 10.5px; color: var(--muted); }
-@keyframes rise { from { opacity: 0; transform: translateY(3px); } }
-.think-done {
-  display: flex; align-items: center; gap: 8px; width: 100%;
-  border: 0; background: transparent; padding: 4px 0;
-  font-size: 12px; color: var(--muted); cursor: pointer; text-align: left;
+.tools-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tool-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface); border: 1px solid var(--rule);
+  font-size: 11px; color: var(--ink-2);
 }
-.think-done:hover { color: var(--ink-2); }
-.think-done span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-chip .tool-ic { color: var(--accent); display: inline-flex; }
+.tool-chip b { font-family: var(--mono); font-size: 10px; font-weight: 500; color: var(--muted); }
+.tool-chip.skip { border-style: dashed; color: var(--muted); opacity: 0.75; }
+.tool-chip.running { border-color: var(--accent-line); background: var(--accent-soft); }
+.tools-ms { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.tools-chev {
+  color: var(--muted); display: inline-flex; line-height: 1;
+  transition: transform 0.16s var(--ease);
+}
+.tools-chev.open { transform: rotate(180deg); }
+.tools-list {
+  border-top: 1px solid var(--rule); padding: 6px 12px 8px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.tool {
+  display: grid; grid-template-columns: 16px 76px minmax(0, 1fr) auto;
+  gap: 10px; align-items: center; padding: 4px 0;
+  font-size: 12px; color: var(--ink-2);
+}
+.tool .tool-ic { color: var(--accent); display: inline-flex; }
+.tool-name { white-space: nowrap; }
+.tool-detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-state { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.tool.skip .tool-name, .tool.skip .tool-detail { opacity: 0.65; }
 
 .answer { font-size: 15px; line-height: 1.78; color: var(--ink); overflow-wrap: anywhere; }
 .answer > *:first-child { margin-top: 0; }
