@@ -16,6 +16,8 @@ import re
 from core.llm import chat
 from core.normalize import normalize_record
 
+from ingest import guard
+
 FIELDS = (
     "grade",
     "supplier",
@@ -83,6 +85,9 @@ C. 判断不了就进 passages。宁可不成表，也不要硬塞进 records。
    按列顺序把数值对应到牌号；对不上就填 null，不要猜。
 9. 同一牌号在一个片段里有多个测试（如压缩形变、耐化学性/介质浸泡）时，拆成多条记录：
    一条记录只放一个测试数值和它自己的测试条件，不要把 A 测试的温度介质写到 B 测试上。
+11. temp_range 必须是**上下界两个数**（如 "-20~230°C"）。片段里只有一个温度时，
+   写进 test_temp，temp_range 填 null；把单值填进 temp_range 会被判为错列。
+12. test_duration 统一写小时（如 "70 h"）；原文是分钟就保留 "70 min"，不要自己换算。
 10. 片段是日语或英语时，records 的字段值用中文（牌号、化学式保留原文）；passages.text 保留原话。
 
 页面表头：{head}
@@ -139,7 +144,12 @@ def _records(items) -> list[dict]:
             continue
         record = {key: item.get(key) for key in FIELDS}
         record["confidence"] = _confidence(record.get("confidence"))
-        records.append(normalize_record(record))
+        record = normalize_record(record)
+        # 字段级守卫：越界置空、单值范围降级、时长单位换算，问题随记录带到入库层
+        record, issues = guard.audit(record)
+        if issues:
+            record["_issues"] = issues
+        records.append(record)
     return records
 
 

@@ -19,6 +19,7 @@ from core import vector_store as vs
 from core.config import env
 from core.query_engine import FIELDS as FIELD_LABELS
 from ingest import grades, metadata, repo
+from ingest import guard
 from ingest.chunk import split
 from ingest.extract import extract_all
 from ingest.parse import parse
@@ -440,6 +441,7 @@ def ingest(
     # 按块序装配：并发不改变记录顺序，同一份文件重投时生成的 ID 才稳定
     records: list[dict] = []
     passages: list[dict] = []
+    guard_issues: list[dict] = []
     for index in sorted(results):
         chunk_records, chunk_passages = results[index]
         page = chunks[index - 1]["page"]
@@ -450,6 +452,7 @@ def ingest(
             if not record.get("supplier") and doc_supplier:
                 record["supplier"] = doc_supplier
             record.update(applications.enrich(record))
+            guard_issues.extend(record.pop("_issues", None) or [])
             record["_chunk"] = index
             record["_row"] = len(records)
             records.append(record)
@@ -458,6 +461,12 @@ def ingest(
             passages.append(passage)
 
     _log(f"  抽取 {len(records)} 条记录 / {len(passages)} 条片段（失败块 {failed}/{len(chunks)}）")
+    if guard_issues:
+        stats = guard.summarize(guard_issues)
+        detail = "、".join(f"{code}×{bucket['count']}" for code, bucket in sorted(stats.items(), key=lambda kv: -kv[1]['count']))
+        _log(f"  数据守卫：修正 {len(guard_issues)} 处（{detail}）")
+        yield {"type": "warn", "message": f"数据守卫：已修正 {len(guard_issues)} 处不合规字段（{detail}）"}
+        guard.record_issues(guard_issues, doc_id=did, filename=filename)
 
     if cancelled and not records and not passages:
         yield {
