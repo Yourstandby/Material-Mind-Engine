@@ -38,7 +38,7 @@ $arguments = @(
     "-c", "8192",
     "-b", "8192",
     "-ub", "8192",
-    "-ngl", "99",
+    "-ngl", (Get-Cfg "MME_EMBED_NGL" "0"),
     "-t", "16",
     "--host", "127.0.0.1",
     "--port", "$Port",
@@ -46,6 +46,9 @@ $arguments = @(
 )
 
 Write-Host "启动 Embedding（$gguf，pooling=$pooling）端口 $Port…" -ForegroundColor Cyan
+# -ngl 0 时彻底屏蔽 CUDA：llama.cpp 即使不上模型层也会在 device 0 分配 compute buffer，
+# 显存被别的服务占满时仍会 cudaMalloc 失败。
+if ((Get-Cfg "MME_EMBED_NGL" "0") -eq "0") { $env:CUDA_VISIBLE_DEVICES = "-1" }
 $process = Start-Process -FilePath $bin -ArgumentList $arguments `
     -WorkingDirectory (Split-Path -Parent $bin) `
     -RedirectStandardOutput (Join-Path $MME_LOG "embed.out.log") `
