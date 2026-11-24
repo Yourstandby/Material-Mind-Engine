@@ -890,6 +890,12 @@ COMPARE_WORDS = ("对比", "比较", "哪个", "最高", "最低", "最大", "�
 MAX_UP_WORDS = ("最高", "最大", "最好", "最强")
 MAX_DOWN_WORDS = ("最低", "最小", "最差", "最弱")
 
+# 出现在配方段落里的组分，不是可比较的产品
+NON_PRODUCT_MARKS = (
+    "carbon black", "炭黑", "peroxide", "过氧化物", "coagent", "助剂", "elastomag",
+    "氧化镁", "交联剂", "促进剂", "填料", "增塑剂", "硫化剂", "physical properties",
+)
+
 REASON_LABELS = {
     "grade": "按牌号",
     "supplier": "按供应商",
@@ -944,6 +950,18 @@ def _match_materials(question: str) -> list:
     return codes
 
 
+def _valid_product_name(name) -> bool:
+    """产品名得像个牌号：纯数字/日期/编号串（7/13506501261469366）不是产品，
+    配方组分（炭黑、过氧化物、助剂）也不会是产品。"""
+    text = _tidy(name)
+    if not text or len(text) > 60:
+        return False
+    # _tidy 会去空格，所以标记也要归一化后再比（carbon black → carbonblack）
+    if any(_tidy(mark) in text for mark in NON_PRODUCT_MARKS):
+        return False
+    return not re.fullmatch(r"[\d\s/\-_.:#（）()]+", text)
+
+
 def _usable_products(allowed=None) -> list:
     """能当对比对象的产品：有牌号、不是文献、不是「未标注产品」。"""
     out = []
@@ -954,6 +972,8 @@ def _usable_products(allowed=None) -> list:
         if catalog.is_unnamed(item.get("product_name") or ""):
             continue
         if _tidy(item.get("product_name")) in MATERIAL_WORDS:
+            continue
+        if not _valid_product_name(item.get("product_name")):
             continue
         out.append(item)
     return out
@@ -1127,6 +1147,9 @@ def compare_products(products: list, question: str, rows: list | None = None,
         values = {column: list(bucket.values()) for column, bucket in values.items()}
         if not any(values.values()):
             continue
+        # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
+        if asked and not any(values.get(column) for column in asked):
+            continue
         table.append(
             {
                 "product": key,
@@ -1135,6 +1158,24 @@ def compare_products(products: list, question: str, rows: list | None = None,
                 "metas": metas,
             }
         )
+
+    # 数据最全的排前面，别让「有牌号且有对应数值」的产品和助剂并列；
+    # 同一覆盖数时，被问的主字段有值的优先
+    if asked and len(table) > 1:
+        table.sort(
+            key=lambda row: (
+                -sum(1 for key in asked if row["cells"].get(key)),
+                0 if row["cells"].get(asked[0]) else 1,
+            )
+        )
+
+    # 列只有极少数行有值时不占版面：一行有值就建列，表看着像填表失败
+    if table:
+        columns = [
+            key for key in columns
+            if key in asked
+            or sum(1 for row in table if row["cells"].get(key)) / len(table) >= 0.3
+        ]
 
     return {
         "products": picked,
