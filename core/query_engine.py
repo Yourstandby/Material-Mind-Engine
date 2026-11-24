@@ -1126,38 +1126,59 @@ def _drop_echo_cells(cells: dict) -> dict:
     return out
 
 
+def _fragment_bucket(meta: dict) -> tuple:
+    """碎片归组键：同一份资料、同一页，才可能是同一张表被切开的碎片。
+
+    跨页 / 跨文档的字段不并：不同资料里的两个数值本来就是独立证据，并起来就是
+    把两份资料当成一份说。旧库里没有 doc_id 时退化成按 source 归组。
+    """
+    return (str(meta.get("doc_id") or ""), str(meta.get("source") or ""))
+
+
 def _merge_fragments(metas: list, columns: list, asked=()) -> list:
     """把同一产品下互相补全的 chunk 碎片并成一条记录。
 
     同一份 datasheet 常被切进多个 chunk，每个只带两三个字段，逐 chunk 上表就会出现
-    「一个牌号 3 条记录、每条只剩两个字段」。按重叠字段值相同来并，能拼完整又不会
-    造出伪冲突。
+    「一个牌号 3 条记录、每条只剩两个字段」。先按资料 + 页归组，组内再按「重叠字段
+    值相同」合并：能拼完整，又不会把不同测试条件拼成伪冲突。
     """
-    groups: list = []
+    buckets: dict = {}
     for meta in metas:
-        cells = {}
-        for column in columns:
-            cell = _cell(meta.get(column), column)
-            if cell:
-                cells[column] = cell
-        if not cells:
-            continue
-        # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
-        if asked and not any(column in cells for column in asked):
-            continue
-        for group in groups:
-            if _compatible(group["cells"], cells):
-                for column, value in cells.items():
-                    group["cells"].setdefault(column, value)
-                group["metas"].append(meta)
-                break
-        else:
-            groups.append({"cells": cells, "metas": [meta]})
+        buckets.setdefault(_fragment_bucket(meta), []).append(meta)
 
-    out = []
-    for group in groups:
-        cells = _drop_echo_cells(group["cells"])
-        if cells:
+    out: list = []
+    seen: set = set()
+    for bucket in buckets.values():
+        groups: list = []
+        for meta in bucket:
+            cells = {}
+            for column in columns:
+                cell = _cell(meta.get(column), column)
+                if cell:
+                    cells[column] = cell
+            if not cells:
+                continue
+            # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
+            if asked and not any(column in cells for column in asked):
+                continue
+            for group in groups:
+                if _compatible(group["cells"], cells):
+                    for column, value in cells.items():
+                        group["cells"].setdefault(column, value)
+                    group["metas"].append(meta)
+                    break
+            else:
+                groups.append({"cells": cells, "metas": [meta]})
+
+        for group in groups:
+            cells = _drop_echo_cells(group["cells"])
+            if not cells:
+                continue
+            # 跨页/跨文档的完全重复行（重复表头、跨页续表）仍然要去重
+            signature = tuple(sorted(cells.items()))
+            if signature in seen:
+                continue
+            seen.add(signature)
             out.append({"cells": cells, "metas": group["metas"]})
     return out
 
@@ -1434,6 +1455,17 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
 
     listed = {row["product"] for row in rows}
     missing = [str(item.get("product_name")) for item in products if str(item.get("product_name")) not in listed]
+
+    # 问题问的是区间（耐温范围/高温低温），但某个产品的温度全是单点测试值：
+    # 逐卡提示，别让人把某个测试条件当成耐温上下限。
+    notes: list = []
+    wants_range = any(word in (question or "") for word in ("范围", "区间", "耐温", "高温", "低温", "温度"))
+    if wants_range:
+        for group in groups:
+            keys = {field["key"] for record in group["records"] for field in record["fields"]}
+            if keys & set(value_parser.TEMPERATURE_FIELDS) and not keys & set(value_parser.RANGE_FIELDS):
+                group["note"] = "只有单点测试温度，库内无区间数据"
+
     return {
         "title": title,
         "reason": reason,
@@ -1446,6 +1478,7 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
         "missing": missing[:4],
         "missing_total": len(missing),
         "truncated": max(0, (result.get("total") or 0) - len(products)),
+        "notes": notes,
     }
 
 

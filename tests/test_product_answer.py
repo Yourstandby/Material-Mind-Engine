@@ -292,3 +292,46 @@ def test_payload_cards_have_unit_everywhere():
                 if field["key"] in ("temp_range", "test_temp", "test_duration", "cs"):
                     # 数值字段必须带单位，裸数字上卡片就是本轮要修的病
                     assert not re.fullmatch(r"[-+]?\d+(?:\.\d+)?", field["value"].strip()), field
+
+
+FRAGMENT_2_source_copy = dict(FRAGMENT_2, source="a.pdf p.2")
+
+
+def test_fragments_do_not_merge_across_documents():
+    """不同资料里的字段不许并成一条记录：那是两份独立证据。"""
+    a = dict(FRAGMENT_2, source="a.pdf p.1")
+    b = dict(FRAGMENT, source="b.pdf p.1")
+    merged = qe._merge_fragments([a, b], ["test_temp", "test_duration"], [])
+    assert len(merged) == 2
+
+
+def test_identical_rows_across_pages_still_deduped():
+    """跨页续表会产生完全相同的行，合并后仍要去重。"""
+    a = dict(FRAGMENT_2, source="a.pdf p.1")
+    b = dict(FRAGMENT_2_source_copy)
+    merged = qe._merge_fragments([a, b], ["test_temp", "test_duration"], [])
+    assert len(merged) == 1
+
+
+def test_payload_notes_missing_range_data():
+    """问耐温区间但库里全是单点测试值时要明说，别让人把单点当范围。"""
+    result = {
+        "products": [{"product_id": "p1", "product_name": "A"}],
+        "columns": [{"key": "test_temp", "label": "测试温度"}],
+        "rows": [{"product": "A", "cells": {"test_temp": ["232 °C"]}, "metas": [{}]}],
+        "reason": "material",
+        "total": 1,
+    }
+    payload = qe.compare_payload(result, "FFKM 耐高温低温的差距")
+    assert "无区间数据" in payload["groups"][0]["note"]
+
+
+def test_payload_no_note_when_range_exists():
+    result = {
+        "products": [{"product_id": "p1", "product_name": "A"}],
+        "columns": [{"key": "temp_range", "label": "温度范围"}],
+        "rows": [{"product": "A", "cells": {"temp_range": ["-20 ~ 230 °C"]}, "metas": [{}]}],
+        "reason": "material",
+        "total": 1,
+    }
+    assert "note" not in qe.compare_payload(result, "FFKM 耐温范围")["groups"][0]

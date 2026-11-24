@@ -519,12 +519,13 @@ function renderCompare(p) {
           <span class="cmp-rec-count">${(group.records || []).length} 条记录</span>
           ${shared}
         </header>
+        ${group.note ? `<p class="cmp-note-inline">${esc(group.note)}</p>` : ""}
         ${records}
       </article>`;
     })
     .join("");
   const conclusion = (p.conclusion || "").replace(/^结论[:：]\s*/, "");
-  const notes = [];
+  const notes = [...(p.notes || [])];
   if (p.missing_total) notes.push(`另有 ${p.missing_total} 个产品库内没有可对比的记录：${(p.missing || []).join("、")}`);
   if (p.truncated) notes.push(`还有 ${p.truncated} 个产品未列出，加供应商或牌号可缩小范围`);
   return `<section class="cmp">

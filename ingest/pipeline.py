@@ -140,6 +140,9 @@ def serialize(record: dict) -> str:
     for key, value in record.items():
         if value in (None, "", [], {}):
             continue
+        # 下划线开头是溯源字段（_chunk / _row），只进 metadata，不进向量文本
+        if key.startswith("_"):
+            continue
         # 行业/部件等原文已归一成中文标签，不重复进向量文本
         if key in ("industry", "part", "medium", "certifications", "industry_codes", "parts_codes"):
             continue
@@ -154,6 +157,16 @@ def serialize(record: dict) -> str:
 
 def _meta(record: dict, doc_id: str = "", material_hint: str = "", doc_type: str = "") -> dict:
     meta = {k: v for k, v in record.items() if isinstance(v, (str, int, float, bool))}
+    # 溯源：哪一块、第几条。同一份资料同一页的多个 chunk 可能是同一张表的碎片，
+    # 对比时靠它判断「能不能并成一条记录」，而不是靠字段相似度瞎猜。
+    chunk_index = meta.pop("_chunk", None)
+    row_index = meta.pop("_row", None)
+    if chunk_index is not None and row_index is not None:
+        meta["chunk_index"] = int(chunk_index)
+        meta["row_index"] = int(row_index)
+        meta["record_id"] = hashlib.md5(
+            f"{doc_id}:{meta.get('source') or ''}:{chunk_index}:{row_index}".encode()
+        ).hexdigest()[:16]
     if doc_id:
         meta["doc_id"] = doc_id
     if doc_type:
@@ -437,6 +450,8 @@ def ingest(
             if not record.get("supplier") and doc_supplier:
                 record["supplier"] = doc_supplier
             record.update(applications.enrich(record))
+            record["_chunk"] = index
+            record["_row"] = len(records)
             records.append(record)
         for passage in chunk_passages:
             passage["page"] = page
