@@ -24,13 +24,21 @@ PERSIST = env("CHROMA_PATH", "./chroma_db")
 CATALOG = env("CATALOG_COLLECTION", "catalog")
 
 # 能力型/元问题：确定性路由，不进检索也不花一次 LLM 调用。
-# 只在问题足够短且不含技术名词时生效，避免误伤「你能查 FFKM 耐温吗」这类真实提问。
+# 先剔掉口语前缀（“那你现在是谁”里的“那”），再匹配；只在问题够短且不含技术名词时生效，
+# 避免误伤「你能查 FFKM 耐温吗」这类真实提问。
+META_PREFIX = re.compile(r"^(?:那么|那|所以|然后|所以呢|请问|请|嗯|哦|好的|好)")
 META_PATTERN = re.compile(
-    r"^(?:你|您)?(?:能|会|可以)(?:做|作|干|查|提供|帮)(?:什么|哪些|我什么)"
-    r"|^你(?:是|叫)谁|^你是谁|^怎么(?:用|使用)|^使用说明|^帮助|^help$"
-    r"|^能查(?:什么|哪些)|^支持(?:什么|哪些)|^有什么功能"
+    r"^(?:你|您)(?:现在|到底|究竟|还)?(?:是|叫|算)(?:谁|什么|哪个|什么名字|干什么的)?"
+    r"|^(?:你|您)?(?:能|会|可以|可以帮|能帮)(?:做|作|干|查|提供|帮|给)(?:什么|哪些|我什么)"
+    r"|^(?:你|您)(?:现在|到底)?(?:在)?(?:干|做)(?:什么|嘛)"
+    r"|怎么(?:用|使用)|^使用说明|^帮助|^help$|^能查(?:什么|哪些)|^支持(?:什么|哪些)|^有什么功能"
 )
 META_SKIP = ("耐温", "密度", "硬度", "牌号", "对比", "压缩", "介质", "拉伸", "密封")
+# 自我指涉：绝不允许被当成「查了哪些产品」而输出对比表格
+SELF_REFERENCE = (
+    "你是谁", "你叫什么", "你是什么", "你是哪个", "你现在是谁", "你会什么",
+    "你能做什么", "你能作什么", "你是干什么", "你算谁",
+)
 CAPABILITY_TEXT = """我是 Material Mind，查的是本地材料库，不是通用问答。
 
 **能做的三件事**
@@ -47,11 +55,18 @@ CAPABILITY_TEXT = """我是 Material Mind，查的是本地材料库，不是通
 def meta_reply(question: str) -> str | None:
     """能力型/元问题直接返回固定文案；不是这类问题就返回 None。"""
     text = re.sub(r"[\s?？。!！,.，、]+", "", question or "").lower()
+    text = META_PREFIX.sub("", text)
     if not text or len(text) > 20:
         return None
     if any(word in text for word in META_SKIP):
         return None
     return CAPABILITY_TEXT if META_PATTERN.search(text) else None
+
+
+def asks_self(question: str) -> bool:
+    """问的是助手自身？用于拦住“答非所问”的结构化表格。"""
+    text = _tidy(question)
+    return any(word in text for word in SELF_REFERENCE)
 
 TEMP_KEYWORDS = ("耐温", "温度", "temperature")
 TEMP_EXPANSION = "temperature range operating temperature -20 230 °C"
@@ -1215,6 +1230,8 @@ def answer_by_products(question: str, collection: str = CATALOG,
                        product: str | None = None, allowed=None) -> dict | None:
     """有目标产品就走结构化对比，返回 None 表示交给 LLM 兜底。"""
     if _resolve(collection) != CATALOG:
+        return None
+    if asks_self(question):  # “你是谁”这类问题不可能是产品查询，绝不出表格
         return None
     if _asks_document(question):  # 问「资料里的原文」不走表格
         return None
