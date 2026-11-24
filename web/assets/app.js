@@ -63,11 +63,23 @@ function renderMD(md) {
         if (rows.some((r) => r.join("|") === row.join("|"))) continue;
         rows.push(row);
       }
+      // 空列/空行直接丢掉：库里抽不全的字段会拼出「｜ ｜ ｜」这种空壳表格
+      const keep = head.map((_, idx) => rows.some((r) => (r[idx] || "").trim()) || (head[idx] || "").trim());
+      const cols = head.map((_, idx) => idx).filter((idx) => keep[idx]);
+      if (cols.length < 2) {
+        // 只剩一列时表格没意义，按普通行输出
+        html += `<p>${inline(cols.length ? head[cols[0]] : head.join(" "))}</p>`;
+        continue;
+      }
+      const trimmed = rows
+        .map((r) => cols.map((idx) => (r[idx] || "").trim()))
+        .filter((r) => r.some(Boolean));
+      if (!trimmed.length) continue;
       html +=
-        "<table><thead><tr>" +
-        head.map((c) => `<th>${inline(c)}</th>`).join("") +
+        '<div class="tbl-scroll"><table class="tbl"><thead><tr>' +
+        cols.map((idx) => `<th>${inline(head[idx] || "")}</th>`).join("") +
         "</tr></thead><tbody>" +
-        rows
+        trimmed
           .map(
             (r) =>
               "<tr>" +
@@ -75,7 +87,7 @@ function renderMD(md) {
               "</tr>"
           )
           .join("") +
-        "</tbody></table>";
+        "</tbody></table></div>";
       continue;
     }
 

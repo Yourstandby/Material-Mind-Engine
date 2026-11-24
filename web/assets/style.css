@@ -899,7 +899,7 @@ kbd {
   opacity: 0; transform: translateY(6px);
   transition: opacity 0.18s var(--ease), transform 0.18s var(--ease);
 }
-.toast.on { opacity: 1; transform: translateY(0); }
+.toast.on, .toast.in { opacity: 1; transform: translateY(0); }
 .toast-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: 0.6; }
 .toast-text { max-width: 60vw; }
 
@@ -1162,6 +1162,48 @@ kbd {
 [data-theme="dark"] .f-html, [data-theme="dark"] .f-htm, [data-theme="dark"] .f-json, [data-theme="dark"] .f-xml { color: #e2bb7c; background: rgba(226, 187, 124, 0.14); border-color: rgba(226, 187, 124, 0.24); }
 [data-theme="dark"] .f-ppt, [data-theme="dark"] .f-pptx, [data-theme="dark"] .f-odp { color: #e7a887; background: rgba(231, 168, 135, 0.14); border-color: rgba(231, 168, 135, 0.24); }
 [data-theme="dark"] .f-png, [data-theme="dark"] .f-jpg, [data-theme="dark"] .f-jpeg, [data-theme="dark"] .f-webp, [data-theme="dark"] .f-tif, [data-theme="dark"] .f-tiff { color: #bda5ef; background: rgba(189, 165, 239, 0.14); border-color: rgba(189, 165, 239, 0.24); }
+
+/* 组件态：按钮忙碌 / 空队列行 */
+button.busy, .busy { opacity: 0.6; cursor: progress; }
+.up-row.zero { opacity: 0.55; }
+#appSelect { max-width: 200px; }
+
+/* Markdown 表格（LLM 正文）与反馈区 */
+.answer .tbl-scroll {
+  margin: 0 0 1em; overflow-x: auto; scrollbar-width: thin;
+  border: 1px solid var(--rule); border-radius: var(--radius-sm); background: var(--surface);
+}
+.answer .tbl-scroll .tbl { margin: 0; min-width: 100%; }
+.answer .tbl th {
+  white-space: nowrap; border-bottom: 1px solid var(--rule-strong);
+  position: sticky; top: 0; background: var(--surface-2); z-index: 1;
+}
+.answer .tbl td { white-space: normal; min-width: 92px; vertical-align: top; }
+.answer .tbl td.num { text-align: right; font-family: var(--mono); }
+.answer .tbl tbody tr:last-child td { border-bottom: 0; }
+
+.t-actions { flex-wrap: wrap; }
+.verdicts {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  flex-basis: 100%; padding-top: 4px;
+}
+.verdicts::before { content: "哪里不对？"; font-size: 11px; color: var(--muted); margin-right: 2px; }
+.verdicts button {
+  height: 28px; padding: 0 11px; border-radius: 7px;
+  border: 1px solid var(--rule); background: var(--surface);
+  color: var(--ink-2); font-size: 11.5px; cursor: pointer;
+  transition: border-color 0.14s var(--ease), color 0.14s var(--ease);
+}
+.verdicts button:hover { border-color: var(--accent-line); color: var(--accent); }
+
+/* 检索命中计数（输入区右下） */
+#hits { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+#hits.on { color: var(--accent); }
+
+/* 投喂日志行 */
+.up-line { font-family: var(--mono); font-size: 11px; line-height: 1.7; color: var(--muted); }
+.up-line.warn { color: var(--warn); }
+.up-line.err { color: var(--danger); }
 
 /* ───────── 看板页（/admin） ───────── */
 body.adm-body { background: var(--paper); }
