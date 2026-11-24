@@ -1,4 +1,4 @@
-﻿# 一键启动：Embedding → OCR → 网关 → Chroma → Web
+﻿# 一键启动：Embedding → 重排 → OCR → 网关 → Chroma → Web
 #
 # LLM 默认不碰（可能已经作为服务在跑）；要一起拉起加 -WithLlm。
 #
@@ -26,16 +26,19 @@ if ($WithLlm) {
 Write-Host "`n[2/6] Embedding" -ForegroundColor Cyan
 & "$PSScriptRoot\start-embed.ps1" @forceArg
 
-Write-Host "`n[3/6] OCR" -ForegroundColor Cyan
+Write-Host "`n[3/7] 重排（cross-encoder）" -ForegroundColor Cyan
+& "$PSScriptRoot\start-rerank.ps1" @forceArg
+
+Write-Host "`n[4/7] OCR" -ForegroundColor Cyan
 & "$PSScriptRoot\start-ocr.ps1" @forceArg
 
-Write-Host "`n[4/6] 网关" -ForegroundColor Cyan
+Write-Host "`n[5/7] 网关" -ForegroundColor Cyan
 & "$PSScriptRoot\start-gateway.ps1" @forceArg
 
-Write-Host "`n[5/6] Chroma（向量库）" -ForegroundColor Cyan
+Write-Host "`n[6/7] Chroma（向量库）" -ForegroundColor Cyan
 & "$PSScriptRoot\start-chroma.ps1" @forceArg
 
-Write-Host "`n[6/6] MME Web" -ForegroundColor Cyan
+Write-Host "`n[7/7] MME Web" -ForegroundColor Cyan
 & "$PSScriptRoot\start-web.ps1" @forceArg
 
 Write-Host "`n全部就绪：" -ForegroundColor Green

@@ -279,9 +279,13 @@ def rerank_scores(query: str, texts: list[str]) -> list[float] | None:
     except Exception:  # noqa: BLE001 - 重排是加分项，不可用就跳过
         return None
 
-    items = data.get("results") if isinstance(data, dict) else None
-    if items is None and isinstance(data, dict):
-        items = data.get("data")
+    # 三种返回形态都认：llama.cpp 直接给数组，TEI/Jina 给 results，vLLM 给 data
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("results") or data.get("data")
+    else:
+        items = None
     if not isinstance(items, list):
         return None
 
