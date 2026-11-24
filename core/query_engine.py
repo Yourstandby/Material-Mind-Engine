@@ -1275,6 +1275,78 @@ def render_compare(result: dict, question: str = "") -> str:
     return "\n".join(out)
 
 
+def compare_payload(result: dict, question: str = "", numbering: dict | None = None) -> dict:
+    """前端渲染用的结构化对比数据（产品卡片）。
+
+    与 render_compare 同源同序：数值、分组、引用编号完全一致，只是把宽表拆成
+    「一个产品一张卡 + 每条记录一行键值」——九列宽表在窄屏上只会把表头折断。
+    """
+    products = result.get("products") or []
+    columns = result.get("columns") or []
+    rows = result.get("rows") or []
+    if not rows or not columns:
+        return {}
+    reason = REASON_LABELS.get(result.get("reason"), "")
+    name = products[0].get("product_name") or ""
+    title = f"命中 {len(products)} 个产品 · {len(rows)} 条记录" + (f" · {reason}" if reason else "")
+    if len(products) == 1 and name:
+        title = f"{name} · {reason or '产品数据'}"
+
+    numbering = numbering or {}
+    groups: list = []
+    by_product: dict = {}
+    for row in rows:
+        product = str(row.get("product") or "")
+        refs: list = []
+        for meta in row.get("metas") or []:
+            mark = numbering.get(id(meta))
+            if mark and mark not in refs:
+                refs.append(mark)
+        fields = []
+        for column in columns:
+            values = row["cells"].get(column["key"]) or []
+            if not values:
+                continue
+            fields.append(
+                {
+                    "key": column["key"],
+                    "label": column["label"],
+                    "value": " / ".join(values[:MAX_CELL_VALUES]),
+                    "extra": max(0, len(values) - MAX_CELL_VALUES),
+                }
+            )
+        if not fields:
+            continue
+        group = by_product.get(product)
+        if group is None:
+            group = {"product": product, "records": []}
+            by_product[product] = group
+            groups.append(group)
+        group["records"].append({"fields": fields, "refs": refs})
+
+    conclusion, conclusion_refs = "", []
+    text, row = _conclusion(result, question)
+    if text and row is not None:
+        conclusion = text
+        conclusion_refs = [numbering[id(meta)] for meta in row["metas"][:1] if id(meta) in numbering]
+
+    listed = {row["product"] for row in rows}
+    missing = [str(item.get("product_name")) for item in products if str(item.get("product_name")) not in listed]
+    return {
+        "title": title,
+        "reason": reason,
+        "columns": columns,
+        "groups": groups,
+        "records": len(rows),
+        "products": len(products),
+        "conclusion": conclusion,
+        "conclusion_refs": conclusion_refs,
+        "missing": missing[:4],
+        "missing_total": len(missing),
+        "truncated": max(0, (result.get("total") or 0) - len(products)),
+    }
+
+
 def answer_by_products(question: str, collection: str = CATALOG,
                        product: str | None = None, allowed=None) -> dict | None:
     """有目标产品就走结构化对比，返回 None 表示交给 LLM 兜底。"""
@@ -1302,8 +1374,10 @@ def answer_by_products(question: str, collection: str = CATALOG,
                 continue
             seen.add(id(meta))
             ordered.append(meta)
+    numbering = {id(meta): i for i, meta in enumerate(ordered, start=1)}
     return {
         "text": text,
+        "payload": compare_payload(result, question, numbering),
         "sources": build_sources(ordered),
         "products": [item.get("product_id") for item in result["products"]],
         "reason": resolved["reason"],

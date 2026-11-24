@@ -327,6 +327,9 @@ def chat(body: Ask, request: Request):
                 }]})
                 yield sse({"type": "meta", "hits": len(direct["sources"]), "collection": body.collection,
                            "mode": "table"})
+                if direct.get("payload"):
+                    # 结构化卡片：前端据此渲染产品卡片，忽略随后的 Markdown 宽表
+                    yield sse({"type": "table", "data": direct["payload"]})
                 yield sse({"type": "sources", "items": direct["sources"]})
                 text = direct["text"]
                 for at in range(0, len(text), 24):

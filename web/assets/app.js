@@ -383,6 +383,57 @@ function renderSources(container, items) {
   );
 }
 
+// 结构化对比：一个产品一张卡、一条记录一行键值（后端 /api/chat 的 table 事件）
+function renderCompare(p) {
+  if (!p || !p.groups || !p.groups.length) return "";
+  const refChips = (list) =>
+    (list || [])
+      .map((n) => `<button type="button" class="cite" data-idx="${n}" title="跳到引用 ${n}">${n}</button>`)
+      .join("");
+  const cards = p.groups
+    .map((group) => {
+      const records = (group.records || [])
+        .map((record) => {
+          const fields = (record.fields || [])
+            .map(
+              (f) =>
+                `<div class="cmp-pair"><dt>${esc(f.label)}${
+                  f.extra ? `<em class="cmp-extra">等 ${f.extra} 个值</em>` : ""
+                }</dt><dd>${esc(f.value)}</dd></div>`
+            )
+            .join("");
+          return `<div class="cmp-rec"><dl class="cmp-fields">${fields}</dl>${
+            record.refs && record.refs.length ? `<div class="cmp-refs">${refChips(record.refs)}</div>` : ""
+          }</div>`;
+        })
+        .join("");
+      return `<article class="cmp-card">
+        <header class="cmp-card-head">
+          <h4 class="cmp-product">${esc(group.product || "未标产品")}</h4>
+          <span class="cmp-rec-count">${(group.records || []).length} 条记录</span>
+        </header>
+        ${records}
+      </article>`;
+    })
+    .join("");
+  const conclusion = (p.conclusion || "").replace(/^结论[:：]\s*/, "");
+  const notes = [];
+  if (p.missing_total) notes.push(`另有 ${p.missing_total} 个产品库内没有可对比的记录：${(p.missing || []).join("、")}`);
+  if (p.truncated) notes.push(`还有 ${p.truncated} 个产品未列出，加供应商或牌号可缩小范围`);
+  return `<section class="cmp">
+    <header class="cmp-head">
+      <span class="cmp-title">${esc(p.title || "产品对比")}</span>
+      <span class="cmp-count">${/条记录/.test(p.title || "") ? "" : `${p.records || 0} 条记录`}</span>
+    </header>
+    ${conclusion ? `<div class="cmp-conclusion"><span class="cmp-badge">结论</span><span>${esc(conclusion)}</span>${refChips(p.conclusion_refs)}</div>` : ""}
+    <div class="cmp-body">${cards}</div>
+    <footer class="cmp-foot">
+      <span>数值取自库内记录，未推断、未换算；点引用编号可核对原文。</span>
+      ${notes.map((n) => `<span class="cmp-note">${esc(n)}</span>`).join("")}
+    </footer>
+  </section>`;
+}
+
 // 只保留正文里真正引用到的来源，编号按正文出现顺序
 function citedSources(items, text) {
   const used = new Set();
@@ -559,6 +610,7 @@ async function ask(question) {
 
   let text = "";
   let sources = [];
+  let cards = null;
   let started = performance.now();
   let frame = 0;
 
@@ -575,20 +627,31 @@ async function ask(question) {
       t.stat.textContent = `${evt.hits} 条命中`;
       $("#hits").textContent = `${evt.hits} 条命中 · ${state.active}`;
       $("#hits").classList.add("on");
+    } else if (evt.type === "table") {
+      // 结构化对比：卡片自己带引用编号，随后的 Markdown 宽表就不再往正文里塞
+      const payload = evt.data || null;
+      if (payload && payload.groups && payload.groups.length) {
+        cards = payload;
+        t.body.innerHTML = renderCompare(payload);
+        scrollToBottom();
+      }
     } else if (evt.type === "sources") {
       sources = evt.items || [];
     } else if (evt.type === "token") {
       text += evt.text || "";
+      if (cards) return; // 正文已由卡片承担，token 只留着给「复制」用
       if (!frame) frame = requestAnimationFrame(paint);
     } else if (evt.type === "done") {
       state.controller = null;
       finishThink(t);
-      if (!text) return;
+      if (!text && !cards) return;
       const ms = evt.elapsed_ms || Math.round(performance.now() - started);
-      t.stat.textContent = `${ms}ms · ${Math.round(text.length)} 字`;
-      t.body.innerHTML = renderMD(text);
-      // 引用等正文全部落定后再出现，且只列正文真正引用到的编号
-      const cited = citedSources(sources, text);
+      t.stat.textContent = cards
+        ? `${ms}ms · ${cards.products || 0} 个产品 · ${cards.records || 0} 条记录`
+        : `${ms}ms · ${Math.round(text.length)} 字`;
+      if (!cards) t.body.innerHTML = renderMD(text);
+      // 卡片模式下列出的引用就是卡片里点到的那几条
+      const cited = cards ? sources : citedSources(sources, text);
       if (cited.length) renderSources(t.sources, cited);
       else t.sources.hidden = true;
       const actions = document.createElement("div");
