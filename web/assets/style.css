@@ -275,6 +275,45 @@ kbd {
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+.think { padding: 2px 0 10px; }
+.think[hidden] { display: none; }
+.think-run {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+.think-run[hidden] { display: none; }
+.think-run .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+  animation: breathe 1.4s var(--ease) infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1); }
+}
+.think-list { list-style: none; margin: 0; padding: 0; }
+.think-list[hidden] { display: none; }
+.think-list li {
+  display: grid; grid-template-columns: 24px 1fr auto; align-items: center;
+  height: 22px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+  animation: stageIn 0.12s var(--ease) both;
+}
+@keyframes stageIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+.think-list .mark { color: var(--muted); font-size: 9px; }
+.think-list .mark.run { color: var(--accent); }
+.think-list .num { font-size: 9.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.think-list li.skip { color: var(--muted); font-style: italic; }
+.think-done {
+  display: flex; justify-content: space-between; gap: 12px; width: 100%;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.06em;
+  color: var(--muted); border: 0; background: 0; padding: 0; cursor: pointer;
+  text-align: left; animation: stageIn 0.12s var(--ease) both;
+}
+.think-done:hover { color: var(--ink-2); }
+
 .skel {
   height: 9px; margin-bottom: 12px;
   background: linear-gradient(90deg, var(--surface-2), var(--rule), var(--surface-2));

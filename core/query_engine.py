@@ -446,16 +446,37 @@ def _diversify_rows(rows: list, top_k: int, per_source: int = 2):
     return picked[:top_k]
 
 
-def _hybrid_merge(question, collection_name, rows, ids, suppliers=None, access_allowed=None):
+def _stage_fn(on_stage):
+    """把检索阶段回调包成不会抛的打点函数；没传回调就空转。"""
+
+    def emit(sid, label, state="done", detail="", ms=None):
+        if on_stage is None:
+            return
+        try:
+            on_stage({"id": sid, "label": label, "state": state, "detail": detail, "ms": ms})
+        except Exception:  # noqa: BLE001 - 打点失败不能影响检索
+            pass
+
+    return emit
+
+
+def _hybrid_merge(question, collection_name, rows, ids, suppliers=None, access_allowed=None,
+                  on_stage=None):
     """稠密候选 + BM25 候选 → RRF 融合 → 可选 cross-encoder 重排。
 
     任何一步失败都原样返回稠密结果：词法索引损坏不应该让检索整体挂掉。
     """
-    if not hybrid.enabled() or not rows:
+    stage = _stage_fn(on_stage)
+    if not hybrid.enabled():
+        stage("bm25", "BM25 词法召回", "skip", "HYBRID_ENABLED=0")
         return rows
+    if not rows:
+        return rows
+    lexical_started = time.perf_counter()
     try:
         lexical = hybrid.bm25(collection_name, question, limit=hybrid.bm25_candidates())
     except Exception:  # noqa: BLE001 - 索引不可用时退回纯向量
+        stage("bm25", "BM25 词法召回", "skip", "索引不可用")
         return rows
     if suppliers:
         lexical = [
@@ -465,13 +486,20 @@ def _hybrid_merge(question, collection_name, rows, ids, suppliers=None, access_a
     if access_allowed is not None:
         lexical = [hit for hit in lexical if access.meta_allowed(hit["meta"], access_allowed)]
     if not lexical:
+        stage("bm25", "BM25 词法召回", "done", "0 候选",
+              int((time.perf_counter() - lexical_started) * 1000))
+        stage("rrf", f"RRF 融合 k={hybrid.rrf_k()}", "skip", "无词法候选")
+        stage("rerank", "cross-encoder 重排", "skip", "仅向量结果")
         return rows
+    stage("bm25", "BM25 词法召回", "done", f"{len(lexical)} 候选",
+          int((time.perf_counter() - lexical_started) * 1000))
 
     pool = {rid: row[:3] for rid, row in zip(ids, rows) if rid}
     for hit in lexical:
         pool.setdefault(hit["id"], (hit["text"], hit["meta"], None))
 
     vector_weight, lexical_weight = hybrid.weights()
+    fuse_started = time.perf_counter()
     fused = hybrid.rrf(
         [list(ids), [hit["id"] for hit in lexical]],
         k=hybrid.rrf_k(),
@@ -485,8 +513,16 @@ def _hybrid_merge(question, collection_name, rows, ids, suppliers=None, access_a
         merged.append((row[0], row[1] or {}, row[2], rank))
     if not merged:
         return rows
+    stage("rrf", f"RRF 融合 k={hybrid.rrf_k()}", "done", f"{len(merged)} 合并",
+          int((time.perf_counter() - fuse_started) * 1000))
     if hybrid.rerank_enabled():
+        rerank_started = time.perf_counter()
+        before = len(merged)
         merged = hybrid.rerank_rows(question, merged)
+        stage("rerank", "cross-encoder 重排", "done", f"{before} 条候选",
+              int((time.perf_counter() - rerank_started) * 1000))
+    else:
+        stage("rerank", "cross-encoder 重排", "skip", "RERANK_BASE_URL 未配置")
     return merged
 
 
@@ -500,11 +536,14 @@ def retrieve_scored(
     part: str | None = None,
     medium: str | None = None,
     allowed=None,
+    on_stage=None,
 ):
     """返回 (docs, metas, scores)，score = 1/(1+distance)，供失败判定使用。
 
     allowed: 可读 doc_id 集合（游客分级用）；None 表示不限制。
+    on_stage: 可选回调，接收阶段事件 {id,label,state,detail,ms}。
     """
+    stage = _stage_fn(on_stage)
     # 「有哪些 / 列出」这类清单问题，命中的条数往往多于 5 条，放宽召回
     if any(word in question for word in ENUM_WORDS):
         top_k = max(top_k, 12)
@@ -512,6 +551,9 @@ def retrieve_scored(
 
     query = expand_query(question)
     model = (store.metadata or {}).get("embedding_model")
+    vector_label = f"向量召回 · {model or '默认嵌入'}"
+    vector_started = time.perf_counter()
+    stage("vector", vector_label, "run")
     # 主筛选维度是产品；material 仅供离线评测按属性切片，不再作为分类导航
     if product and product not in ("all", ""):
         where = {"product_id": product}
@@ -557,6 +599,8 @@ def retrieve_scored(
     docs = (result.get("documents") or [[]])[0]
     metas = (result.get("metadatas") or [[]])[0]
     dists = (result.get("distances") or [[]])[0]
+    stage("vector", vector_label, "done", f"{len(docs)} 候选",
+          int((time.perf_counter() - vector_started) * 1000))
 
     # 过滤在构造阶段做，行与 id 保持一一对应（融合要按 id 对齐两路候选）
     rows, kept_ids = [], []
@@ -578,6 +622,7 @@ def retrieve_scored(
         kept_ids,
         suppliers=suppliers,
         access_allowed=allowed,
+        on_stage=on_stage,
     )
     rows = _diversify_rows(_rerank_rows(question, rows), top_k)
     return [r[0] for r in rows], [r[1] for r in rows], [r[2] for r in rows]

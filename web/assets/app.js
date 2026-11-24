@@ -265,6 +265,7 @@ function createTurn() {
   turn.className = "turn";
   turn.innerHTML = `
     <div class="t-meta"><span class="who">Material Mind</span><span class="stat">检索中…</span></div>
+    <div class="think"><div class="think-run"><span class="dot"></span><span>检索中…</span></div><ol class="think-list" hidden></ol></div>
     <div class="answer"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
     <div class="sources" hidden></div>`;
   $("#stack").appendChild(turn);
@@ -274,7 +275,59 @@ function createTurn() {
     stat: turn.querySelector(".stat"),
     body: turn.querySelector(".answer"),
     sources: turn.querySelector(".sources"),
+    think: turn.querySelector(".think"),
+    thinkTimer: 0,
   };
+}
+
+/* 检索阶段：先逐行播出后端真实打点，再折叠成一行摘要，可点开还原 */
+function renderStages(t, items) {
+  if (!t.think || !items.length) return;
+  const run = t.think.querySelector(".think-run");
+  const list = t.think.querySelector(".think-list");
+  if (run) run.hidden = true;
+  list.hidden = false;
+  list.innerHTML = items
+    .map((s, i) => {
+      const mark = s.state === "skip" ? "·" : s.state === "run" ? "◐" : "✓";
+      const num = [s.detail, s.ms != null ? `${s.ms}ms` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      return `<li class="${s.state === "skip" ? "skip" : ""}" style="animation-delay:${i * 45}ms">
+        <span class="mark ${s.state === "run" ? "run" : ""}">${mark}</span>
+        <span>${esc(s.label || "")}</span>
+        <span class="num">${esc(num)}</span></li>`;
+    })
+    .join("");
+  clearTimeout(t.thinkTimer);
+  t.thinkTimer = setTimeout(() => collapseStages(t, items), 420 + items.length * 45);
+}
+
+function collapseStages(t, items) {
+  const list = t.think.querySelector(".think-list");
+  if (!list || list.hidden) return;
+  const skipped = items.filter((s) => s.state === "skip").map((s) => s.label);
+  const summary = items
+    .filter((s) => s.state !== "skip")
+    .map((s) => (s.detail ? `${s.label.split(" · ")[0]} ${s.detail}` : s.label))
+    .join(" · ");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "think-done";
+  btn.innerHTML = `<span>${esc(summary || "检索完成")}${skipped.length ? `（${esc(skipped.join("、"))}未启用）` : ""}</span><span aria-hidden="true">⌄</span>`;
+  btn.addEventListener("click", () => {
+    btn.remove();
+    list.hidden = false;
+  });
+  list.hidden = true;
+  t.think.appendChild(btn);
+}
+
+/* 没有阶段数据（结构化直达、报错）时不要把“检索中”留在界面上 */
+function finishThink(t) {
+  if (!t.think) return;
+  clearTimeout(t.thinkTimer);
+  if (!t.think.querySelector("li") && !t.think.querySelector(".think-done")) t.think.hidden = true;
 }
 
 function renderSources(container, items) {
@@ -512,7 +565,9 @@ async function ask(question) {
   };
 
   const handle = (evt) => {
-    if (evt.type === "meta") {
+    if (evt.type === "stage") {
+      renderStages(t, evt.items || []);
+    } else if (evt.type === "meta") {
       t.stat.textContent = `${evt.hits} 条命中`;
       $("#hits").textContent = `${evt.hits} 条命中 · ${state.active}`;
       $("#hits").classList.add("on");
@@ -523,6 +578,7 @@ async function ask(question) {
       if (!frame) frame = requestAnimationFrame(paint);
     } else if (evt.type === "done") {
       state.controller = null;
+      finishThink(t);
       if (!text) return;
       const ms = evt.elapsed_ms || Math.round(performance.now() - started);
       t.stat.textContent = `${ms}ms · ${Math.round(text.length)} 字`;
@@ -576,6 +632,7 @@ async function ask(question) {
       scrollToBottom();
     } else if (evt.type === "error") {
       t.stat.textContent = "失败";
+      finishThink(t);
       showError(t.body, evt.message || "请求失败", () => {
         t.turn.remove();
         ask(q);

@@ -295,6 +295,7 @@ def chat(body: Ask, request: Request):
         parts: list[str] = []
         sources: list[str] = []
         top_score = None
+        stages: list[dict] = []
         try:
             # 先解析目标产品：命中就出确定性对比表（数值来自库，不让模型复述），
             # 一个产品都解析不出来才走 RAG + LLM 兜底。
@@ -305,6 +306,10 @@ def chat(body: Ask, request: Request):
             except Exception as exc:  # noqa: BLE001 - 对比层出错退回原链路，别让问答整体失败
                 log.warning("product compare failed: %s", exc)
             if direct:
+                yield sse({"type": "stage", "items": [{
+                    "id": "table", "label": "结构化比对", "state": "done",
+                    "detail": f"{len(direct['sources'])} 条产品记录", "ms": None,
+                }]})
                 yield sse({"type": "meta", "hits": len(direct["sources"]), "collection": body.collection,
                            "mode": "table"})
                 yield sse({"type": "sources", "items": direct["sources"]})
@@ -323,7 +328,10 @@ def chat(body: Ask, request: Request):
                 part=body.part,
                 medium=body.medium,
                 allowed=allowed,
+                on_stage=stages.append,
             )
+            if stages:
+                yield sse({"type": "stage", "items": stages})
             if not docs:
                 names = named_suppliers(question)
                 message = (
