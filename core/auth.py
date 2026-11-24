@@ -43,6 +43,7 @@ READONLY_PATHS = (
     "/api/records",
     "/api/folders",
     "/api/files",
+    "/api/card-view",  # 卡片视图配置：只读无害，写操作仍要登录
 )
 # 带路径参数的读接口（/api/products/{id}、/api/files/{doc_id}）
 READONLY_PREFIXES = ("/api/products/", "/api/files/")

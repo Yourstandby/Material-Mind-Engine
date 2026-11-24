@@ -487,17 +487,85 @@ function renderSources(container, items) {
 }
 
 // 结构化对比：一个产品一张卡、一条记录一行键值（后端 /api/chat 的 table 事件）
-function renderCompare(p) {
+const SAMPLE_PAYLOAD = {
+  title: "命中 2 个产品 · 3 条记录 · 按材质",
+  reason: "按材质",
+  records: 3,
+  products: 2,
+  conclusion: "结论: Perlast G75M 温度范围 -20 ~ 230 °C，跨度 250 °C",
+  conclusion_refs: [1],
+  missing: [],
+  missing_total: 0,
+  truncated: 0,
+  notes: [],
+  groups: [
+    {
+      product: "Perlast G75M",
+      shared_with: [],
+      records: [
+        {
+          fields: [
+            { key: "temp_range", label: "温度范围", value: "-20 ~ 230 °C" },
+            { key: "test_temp", label: "测试温度", value: "200 °C" },
+            { key: "test_duration", label: "测试时长", value: "70 h" },
+            { key: "cs", label: "压缩永久变形", value: "18%" },
+            { key: "material", label: "材质", value: "全氟醚橡胶" },
+          ],
+          refs: [1],
+        },
+      ],
+    },
+    {
+      product: "Syensqo Tecnoflon P 959",
+      shared_with: ["Perlast G75M"],
+      records: [
+        {
+          fields: [
+            { key: "temp_range", label: "温度范围", value: "-20 ~ 200 °C" },
+            { key: "test_temp", label: "测试温度", value: "175 °C" },
+            { key: "test_duration", label: "测试时长", value: "70 h" },
+            { key: "cs", label: "压缩压缩永久变形", value: "25%" },
+            { key: "material", label: "材质", value: "氟橡胶" },
+          ],
+          refs: [2],
+        },
+      ],
+    },
+  ],
+};
+
+/* 按视图配置裁字段：显隐 → 中文名 → 顺序。服务端已按同一份配置裁过一次，
+   这里再做一遍是为了面板里的实时预览（草稿配置还没保存）。 */
+function applyFieldView(fields, view) {
+  const list = fields || [];
+  if (!view || !Array.isArray(view.fields) || !view.fields.length) return list;
+  const meta = new Map(view.fields.map((f) => [f.key, f]));
+  const rank = new Map(view.fields.map((f, i) => [f.key, i]));
+  return list
+    .filter((f) => (meta.has(f.key) ? meta.get(f.key).visible !== false : true))
+    .map((f) => ({ ...f, label: (meta.get(f.key) && meta.get(f.key).label) || f.label }))
+    .sort((a, b) => (rank.has(a.key) ? rank.get(a.key) : 999) - (rank.has(b.key) ? rank.get(b.key) : 999));
+}
+
+function renderCompare(p, view) {
   if (!p || !p.groups || !p.groups.length) return "";
+  view = view || state.cardView || null;
+  const show = (view && view.show) || {};
+  const limit = (view && view.records_per_product) || 0;
+  const cols = (view && view.columns) || 1;
   const refChips = (list) =>
-    (list || [])
-      .map((n) => `<button type="button" class="cite" data-idx="${n}" title="跳到引用 ${n}">${n}</button>`)
-      .join("");
+    show.refs === false
+      ? ""
+      : (list || [])
+          .map((n) => `<button type="button" class="cite" data-idx="${n}" title="跳到引用 ${n}">${n}</button>`)
+          .join("");
+
   const cards = p.groups
     .map((group) => {
-      const records = (group.records || [])
+      const recordsRaw = limit ? (group.records || []).slice(0, limit) : group.records || [];
+      const records = recordsRaw
         .map((record) => {
-          const fields = (record.fields || [])
+          const fields = applyFieldView(record.fields, view)
             .map(
               (f) =>
                 `<div class="cmp-pair"><dt>${esc(f.label)}${
@@ -505,29 +573,41 @@ function renderCompare(p) {
                 }</dt><dd>${esc(f.value)}</dd></div>`
             )
             .join("");
-          return `<div class="cmp-rec"><dl class="cmp-fields">${fields}</dl>${
+          return `<div class="cmp-rec"><dl class="cmp-fields" style="--cv-cols:${cols}">${fields}</dl>${
             record.refs && record.refs.length ? `<div class="cmp-refs">${refChips(record.refs)}</div>` : ""
           }</div>`;
         })
         .join("");
-      const shared = (group.shared_with || []).length
-        ? `<span class="cmp-shared" title="与 ${esc((group.shared_with || []).join("、"))} 数值完全相同，可能同源">同源 · ${esc((group.shared_with || []).join("、"))}</span>`
-        : "";
+      const shared =
+        show.shared !== false && (group.shared_with || []).length
+          ? `<span class="cmp-shared" title="与 ${esc((group.shared_with || []).join("、"))} 数值完全相同，可能同源">同源 · ${esc((group.shared_with || []).join("、"))}</span>`
+          : "";
       return `<article class="cmp-card">
         <header class="cmp-card-head">
           <h4 class="cmp-product">${esc(group.product || "未标产品")}</h4>
-          <span class="cmp-rec-count">${(group.records || []).length} 条记录</span>
+          <span class="cmp-rec-count">${recordsRaw.length} 条记录</span>
           ${shared}
         </header>
-        ${group.note ? `<p class="cmp-note-inline">${esc(group.note)}</p>` : ""}
+        ${show.note !== false && group.note ? `<p class="cmp-note-inline">${esc(group.note)}</p>` : ""}
         ${records}
       </article>`;
     })
     .join("");
-  const conclusion = (p.conclusion || "").replace(/^结论[:：]\s*/, "");
-  const notes = [...(p.notes || [])];
-  if (p.missing_total) notes.push(`另有 ${p.missing_total} 个产品库内没有可对比的记录：${(p.missing || []).join("、")}`);
-  if (p.truncated) notes.push(`还有 ${p.truncated} 个产品未列出，加供应商或牌号可缩小范围`);
+
+  const conclusion =
+    show.conclusion === false ? "" : (p.conclusion || "").replace(/^结论[:：]\s*/, "");
+  const notes = show.footer === false ? [] : [...(p.notes || [])];
+  if (show.footer !== false) {
+    if (p.missing_total) notes.push(`另有 ${p.missing_total} 个产品库内没有可对比的记录：${(p.missing || []).join("、")}`);
+    if (p.truncated) notes.push(`还有 ${p.truncated} 个产品未列出，加供应商或牌号可缩小范围`);
+  }
+  const footer =
+    show.footer === false
+      ? ""
+      : `<footer class="cmp-foot">
+      <span>数值取自库内记录；缺单位的按字段补齐单位，未换算、未推断；点引用编号可核对原文。</span>
+      ${notes.map((n) => `<span class="cmp-note">${esc(n)}</span>`).join("")}
+    </footer>`;
   return `<section class="cmp">
     <header class="cmp-head">
       <span class="cmp-title">${esc(p.title || "产品对比")}</span>
@@ -535,10 +615,7 @@ function renderCompare(p) {
     </header>
     ${conclusion ? `<div class="cmp-conclusion"><span class="cmp-badge">结论</span><span>${esc(conclusion)}</span>${refChips(p.conclusion_refs)}</div>` : ""}
     <div class="cmp-body">${cards}</div>
-    <footer class="cmp-foot">
-      <span>数值取自库内记录；缺单位的按字段补齐单位，未换算、未推断；点引用编号可核对原文。</span>
-      ${notes.map((n) => `<span class="cmp-note">${esc(n)}</span>`).join("")}
-    </footer>
+    ${footer}
   </section>`;
 }
 
@@ -740,6 +817,7 @@ async function ask(question) {
       const payload = evt.data || null;
       if (payload && payload.groups && payload.groups.length) {
         cards = payload;
+        state.lastCompare = payload;
         t.body.innerHTML = renderCompare(payload);
         scrollToBottom();
       }
@@ -1283,3 +1361,170 @@ if (logoutBtn) {
 }
 
 boot();
+
+/* ───────── 卡片视图设置面板 ─────────
+   字段顺序 / 显隐 / 中文名、每产品记录数、卡片列数、元素开关。
+   改的是 core/cardview.py 存的那份配置，保存后所有人生效，不用改代码。 */
+
+let cvDraft = null;
+
+async function loadCardView() {
+  try {
+    const data = await (await fetch("/api/card-view")).json();
+    state.cardView = data.view;
+  } catch (err) {
+    state.cardView = null;
+  }
+}
+
+function cvPreview() {
+  const base = state.lastCompare || SAMPLE_PAYLOAD;
+  const box = $("#cvPreview");
+  if (!box || !cvDraft) return;
+  box.innerHTML = `<div class="cv-preview-head">实时预览</div>${renderCompare(base, cvDraft)}`;
+}
+
+function renderCardViewPanel() {
+  const v = cvDraft;
+  if (!v) return;
+  $("#cvFields").innerHTML = v.fields
+    .map(
+      (f, i) => `<li class="cv-field${f.visible ? "" : " off"}" data-i="${i}">
+        <span class="cv-move">
+          <button type="button" class="cv-up" ${i === 0 ? "disabled" : ""} aria-label="上移">↑</button>
+          <button type="button" class="cv-down" ${i === v.fields.length - 1 ? "disabled" : ""} aria-label="下移">↓</button>
+        </span>
+        <input type="checkbox" class="cv-vis" ${f.visible ? "checked" : ""} aria-label="显示该字段">
+        <input class="cv-label" value="${esc(f.label)}" maxlength="24" aria-label="字段中文名">
+        <code class="cv-key">${esc(f.key)}</code>
+      </li>`
+    )
+    .join("");
+
+  const showToggles = [
+    ["conclusion", "结论"],
+    ["refs", "引用角标"],
+    ["shared", "同源标记"],
+    ["note", "缺区间提示"],
+    ["missing", "缺资料说明"],
+    ["footer", "页脚说明"],
+  ];
+  $("#cvControls").innerHTML = `
+    <label class="cv-row">每产品记录数
+      <select id="cvRecords">${[1, 2, 3, 4, 5, 6, 7, 8]
+        .map((n) => `<option value="${n}" ${n === v.records_per_product ? "selected" : ""}>${n}</option>`)
+        .join("")}</select>
+    </label>
+    <label class="cv-row">卡片列数
+      <select id="cvCols">${[1, 2, 3, 4]
+        .map((n) => `<option value="${n}" ${n === v.columns ? "selected" : ""}>${n}</option>`)
+        .join("")}</select>
+    </label>
+    <fieldset class="cv-show">${showToggles
+      .map(
+        ([key, label]) =>
+          `<label><input type="checkbox" class="cv-show-${key}" ${v.show[key] ? "checked" : ""}>${label}</label>`
+      )
+      .join("")}</fieldset>`;
+  cvPreview();
+}
+
+async function openCardView() {
+  $("#cardView").hidden = false;
+  $("#cvStatus").textContent = "";
+  try {
+    const data = await (await fetch("/api/card-view")).json();
+    cvDraft = data.view;
+    renderCardViewPanel();
+  } catch (err) {
+    $("#cvStatus").textContent = "配置读取失败";
+  }
+}
+
+function moveField(from, to) {
+  if (!cvDraft || to < 0 || to >= cvDraft.fields.length) return;
+  const [item] = cvDraft.fields.splice(from, 1);
+  cvDraft.fields.splice(to, 0, item);
+  renderCardViewPanel();
+}
+
+function bindCardView() {
+  const btn = $("#cardViewBtn");
+  if (!btn) return;
+  btn.addEventListener("click", openCardView);
+  $("#cvClose").addEventListener("click", () => ($("#cardView").hidden = true));
+  $("#cardView").addEventListener("click", (e) => {
+    if (e.target.id === "cardView") $("#cardView").hidden = true;
+  });
+
+  $("#cvFields").addEventListener("click", (e) => {
+    const row = e.target.closest(".cv-field");
+    if (!row || !cvDraft) return;
+    const index = Number(row.dataset.i);
+    if (e.target.closest(".cv-up")) return moveField(index, index - 1);
+    if (e.target.closest(".cv-down")) return moveField(index, index + 1);
+  });
+  $("#cvFields").addEventListener("change", (e) => {
+    const row = e.target.closest(".cv-field");
+    if (!row || !cvDraft) return;
+    const index = Number(row.dataset.i);
+    if (e.target.classList.contains("cv-vis")) {
+      cvDraft.fields[index].visible = e.target.checked;
+      row.classList.toggle("off", !e.target.checked);
+      cvPreview();
+    }
+  });
+  $("#cvFields").addEventListener("input", (e) => {
+    const row = e.target.closest(".cv-field");
+    if (!row || !cvDraft || !e.target.classList.contains("cv-label")) return;
+    cvDraft.fields[Number(row.dataset.i)].label = e.target.value;
+    cvPreview();
+  });
+
+  $("#cvControls").addEventListener("change", (e) => {
+    if (!cvDraft) return;
+    if (e.target.id === "cvRecords") cvDraft.records_per_product = Number(e.target.value);
+    else if (e.target.id === "cvCols") cvDraft.columns = Number(e.target.value);
+    else if (e.target.classList.contains("cv-show")) {
+      const key = e.target.className.replace("cv-show-", "");
+      cvDraft.show[key] = e.target.checked;
+    } else return;
+    cvPreview();
+  });
+
+  $("#cvSave").addEventListener("click", async () => {
+    if (!cvDraft) return;
+    $("#cvStatus").textContent = "保存中…";
+    try {
+      const res = await fetch("/api/card-view", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cvDraft),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      state.cardView = data.view;
+      cvDraft = data.view;
+      $("#cvStatus").textContent = "已保存，之后的卡片按新配置渲染";
+      renderCardViewPanel();
+    } catch (err) {
+      $("#cvStatus").textContent = `保存失败：${err.message}`;
+    }
+  });
+
+  $("#cvReset").addEventListener("click", async () => {
+    try {
+      const data = await (await fetch("/api/card-view/reset", { method: "POST" })).json();
+      state.cardView = data.view;
+      cvDraft = data.view;
+      $("#cvStatus").textContent = "已恢复默认";
+      renderCardViewPanel();
+    } catch (err) {
+      $("#cvStatus").textContent = `重置失败：${err.message}`;
+    }
+  });
+}
+
+loadCardView();
+bindCardView();
+if (location.hash === "#cardview") openCardView();

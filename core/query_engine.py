@@ -10,6 +10,7 @@ from pathlib import Path
 
 import chromadb
 
+from core import cardview
 from core import catalog
 from core import embeddings
 from core import access
@@ -1191,7 +1192,7 @@ def _num(value, field: str = "", want_max: bool = True) -> float | None:
 
 
 def compare_products(products: list, question: str, rows: list | None = None,
-                     limit: int = MAX_PRODUCTS, allowed=None) -> dict:
+                     limit: int = MAX_PRODUCTS, allowed=None, view: dict | None = None) -> dict:
     """把一个/一组产品整理成对比表：列按问题焦点排序，一行一条库内记录。"""
     picked = list(products)[:limit]
     ids = {str(item.get("product_id") or "") for item in picked}
@@ -1228,6 +1229,15 @@ def compare_products(products: list, question: str, rows: list | None = None,
         if key not in columns:
             columns.append(key)
     labels = dict(FIELDS)
+    per_product = MAX_ROWS_PER_PRODUCT
+    if view:
+        # 卡片视图配置：显隐与顺序在这里落地，标题、Markdown 表、前端卡片同源
+        visible = set(cardview.visible_keys(view))
+        rank = cardview.order(view)
+        columns = [key for key in columns if key in visible]
+        columns.sort(key=lambda key: rank.get(key, len(rank)))
+        labels.update(cardview.labels(view))
+        per_product = cardview.records_limit(view)
 
     table = []
     for item in picked:
@@ -1244,7 +1254,7 @@ def compare_products(products: list, question: str, rows: list | None = None,
                 -len(record["cells"]),
             )
         )
-        for record in records[:MAX_ROWS_PER_PRODUCT]:
+        for record in records[:per_product]:
             table.append(
                 {
                     "product": key,
@@ -1443,7 +1453,8 @@ def render_compare(result: dict, question: str = "") -> str:
     return "\n".join(out)
 
 
-def compare_payload(result: dict, question: str = "", numbering: dict | None = None) -> dict:
+def compare_payload(result: dict, question: str = "", numbering: dict | None = None,
+                    view: dict | None = None) -> dict:
     """前端渲染用的结构化对比数据（产品卡片）。
 
     与 render_compare 同源同序：数值、分组、引用编号完全一致，只是把宽表拆成
@@ -1461,6 +1472,7 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
         title = f"{name} · {reason or '产品数据'}"
 
     numbering = numbering or {}
+    show = (view or {}).get("show") or {}
     groups: list = []
     by_product: dict = {}
     for row in rows:
@@ -1504,11 +1516,15 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
         signature = tuple(
             sorted((field["key"], field["value"]) for record in group["records"] for field in record["fields"])
         )
-        group["shared_with"] = [name for name in signatures.get(signature, []) if name != group["product"]]
+        group["shared_with"] = (
+            [name for name in signatures.get(signature, []) if name != group["product"]]
+            if show.get("shared", True)
+            else []
+        )
 
     conclusion, conclusion_refs = "", []
     text, row = _conclusion(result, question)
-    if text and row is not None:
+    if text and row is not None and show.get("conclusion", True):
         conclusion = text
         conclusion_refs = [numbering[id(meta)] for meta in row["metas"][:1] if id(meta) in numbering]
 
@@ -1519,7 +1535,7 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
     # 逐卡提示，别让人把某个测试条件当成耐温上下限。
     notes: list = []
     wants_range = any(word in (question or "") for word in ("范围", "区间", "耐温", "高温", "低温", "温度"))
-    if wants_range:
+    if wants_range and show.get("note", True):
         for group in groups:
             keys = {field["key"] for record in group["records"] for field in record["fields"]}
             if keys & set(value_parser.TEMPERATURE_FIELDS) and not keys & set(value_parser.RANGE_FIELDS):
@@ -1534,8 +1550,8 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
         "products": len(products),
         "conclusion": conclusion,
         "conclusion_refs": conclusion_refs,
-        "missing": missing[:4],
-        "missing_total": len(missing),
+        "missing": missing[:4] if show.get("missing", True) else [],
+        "missing_total": len(missing) if show.get("missing", True) else 0,
         "truncated": max(0, (result.get("total") or 0) - len(products)),
         "notes": notes,
     }
@@ -1553,7 +1569,8 @@ def answer_by_products(question: str, collection: str = CATALOG,
     resolved = resolve_products(question, product=product, allowed=allowed)
     if not resolved["products"]:
         return None
-    result = compare_products(resolved["products"], question, allowed=allowed)
+    view = cardview.load()
+    result = compare_products(resolved["products"], question, allowed=allowed, view=view)
     result["reason"] = resolved["reason"]
     if not result["rows"]:
         return None
@@ -1571,7 +1588,7 @@ def answer_by_products(question: str, collection: str = CATALOG,
     numbering = {id(meta): i for i, meta in enumerate(ordered, start=1)}
     return {
         "text": text,
-        "payload": compare_payload(result, question, numbering),
+        "payload": compare_payload(result, question, numbering, view=view),
         "sources": build_sources(ordered),
         "products": [item.get("product_id") for item in result["products"]],
         "reason": resolved["reason"],

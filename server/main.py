@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import apikeys
+from core import cardview
 from core import auth, embeddings
 from core import access
 from core import applications
@@ -106,6 +107,36 @@ def bootstrap(request: Request):
         "catalog": CATALOG,
         "config": config_status(),
     }
+
+
+class CardViewIn(BaseModel):
+    fields: list[dict] | None = None
+    records_per_product: int | None = None
+    columns: int | None = None
+    show: dict | None = None
+
+
+def _as_dict(model) -> dict:
+    """兼容 pydantic v1/v2：只要「去掉 None」的结果。"""
+    if hasattr(model, "model_dump"):
+        return model.model_dump(exclude_none=True)
+    return model.dict(exclude_none=True)
+
+
+@app.get("/api/card-view")
+def get_card_view():
+    """卡片视图配置：字段顺序/显隐/中文名、每产品记录数、列数、元素开关。"""
+    return {"view": cardview.load(), "options": cardview.options()}
+
+
+@app.put("/api/card-view")
+def put_card_view(body: CardViewIn):
+    return {"view": cardview.save(_as_dict(body))}
+
+
+@app.post("/api/card-view/reset")
+def reset_card_view():
+    return {"view": cardview.reset()}
 
 
 @app.get("/api/products")

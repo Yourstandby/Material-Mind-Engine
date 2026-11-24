@@ -1422,3 +1422,100 @@ body.adm-body { background: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
+
+/* ── 卡片视图设置面板 ── */
+.cv-modal {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(24, 22, 20, 0.42); backdrop-filter: blur(2px);
+}
+.cv-modal[hidden] { display: none; }
+.cv-panel {
+  width: min(960px, 94vw); max-height: 88vh;
+  display: flex; flex-direction: column;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+}
+.cv-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 14px 18px; border-bottom: 1px solid var(--rule);
+}
+.cv-head strong { font-size: 14px; }
+.cv-sub { font-size: 11.5px; color: var(--muted); }
+.cv-close {
+  margin-left: auto; border: 0; background: none; cursor: pointer;
+  font-size: 14px; color: var(--muted); padding: 2px 6px; border-radius: 5px;
+}
+.cv-close:hover { background: var(--surface-2); color: var(--ink); }
+.cv-body {
+  display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 0; min-height: 0; overflow: hidden;
+}
+.cv-config { overflow-y: auto; padding: 14px 16px; border-right: 1px solid var(--rule); }
+.cv-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 12px; }
+.cv-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.cv-row select {
+  font: inherit; font-size: 12px; padding: 2px 6px;
+  border: 1px solid var(--rule); border-radius: 5px; background: var(--surface-2); color: var(--ink);
+}
+.cv-show {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; width: 100%;
+  margin: 0; padding: 10px 0 0; border: 0; border-top: 1px dashed var(--rule);
+  font-size: 12px; color: var(--muted);
+}
+.cv-show label { display: flex; align-items: center; gap: 5px; }
+.cv-fields { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.cv-field {
+  display: grid; grid-template-columns: 46px 18px minmax(0, 1fr) auto;
+  align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: 7px; background: var(--surface-2);
+  border: 1px solid transparent;
+}
+.cv-field:hover { border-color: var(--rule); }
+.cv-field.off { opacity: 0.45; }
+.cv-move { display: flex; gap: 2px; }
+.cv-move button {
+  width: 20px; height: 20px; line-height: 1; cursor: pointer;
+  border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--surface); color: var(--muted); font-size: 11px; padding: 0;
+}
+.cv-move button:disabled { opacity: 0.3; cursor: default; }
+.cv-move button:not(:disabled):hover { color: var(--ink); border-color: var(--rule-strong, var(--rule)); }
+.cv-field .cv-label {
+  font: inherit; font-size: 12.5px; padding: 3px 7px;
+  border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--ink);
+  min-width: 0;
+}
+.cv-field .cv-label:hover { border-color: var(--rule); }
+.cv-field .cv-label:focus { outline: none; border-color: var(--accent-line); background: var(--surface); }
+.cv-key { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.cv-preview { overflow-y: auto; padding: 14px 16px; background: var(--surface-2); min-width: 0; }
+.cv-preview-head {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 8px;
+}
+.cv-preview .cmp { border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.cv-foot {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; border-top: 1px solid var(--rule); background: var(--surface-2);
+}
+.cv-status { flex: 1; font-size: 11.5px; color: var(--muted); }
+.cv-btn {
+  font: inherit; font-size: 12.5px; padding: 6px 14px; cursor: pointer;
+  border: 1px solid var(--rule); border-radius: 7px;
+  background: var(--surface); color: var(--ink);
+}
+.cv-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.cv-btn:hover { filter: brightness(0.97); }
+/* 卡片列数：由 renderCompare 写进 --cv-cols（面板里 1~4 列） */
+.cmp-fields { grid-template-columns: repeat(var(--cv-cols, 3), minmax(0, 1fr)); }
+@media (max-width: 560px) {
+  .cmp-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .cv-body { grid-template-columns: 1fr; }
+  .cv-preview { display: none; }
+}

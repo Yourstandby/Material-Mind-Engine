@@ -26,6 +26,7 @@
       <span class="status"><i class="dot"></i><span id="statusText">本地知识库</span></span>
       <div class="side-actions">
         <button class="kbd-btn" id="paletteBtn" type="button"><span class="ico" data-icon="search"></span><kbd>Ctrl K</kbd></button>
+        <button class="kbd-btn" id="cardViewBtn" type="button">卡片</button>
         <button class="kbd-btn" id="acctBtn" type="button">账号</button>
         <a class="kbd-btn" id="admBtn" href="/admin" hidden>看板</a>
         <button class="kbd-btn" id="logoutBtn" type="button">退出</button>
@@ -220,9 +221,30 @@
 <input type="file" id="fileInput" multiple hidden
   accept=".pdf,.docx,.xlsx,.xlsm,.html,.htm,.md,.txt,.csv,.json">
 
+<div class="cv-modal" id="cardView" hidden>
+  <div class="cv-panel" role="dialog" aria-label="卡片视图设置">
+    <header class="cv-head">
+      <strong>卡片视图</strong>
+      <span class="cv-sub">勾选显示、上下移调顺序、改中文名，右侧实时预览</span>
+      <button class="cv-close" id="cvClose" type="button" aria-label="关闭">✕</button>
+    </header>
+    <div class="cv-body">
+      <div class="cv-config">
+        <div class="cv-controls" id="cvControls"></div>
+        <ul class="cv-fields" id="cvFields"></ul>
+      </div>
+      <div class="cv-preview" id="cvPreview"></div>
+    </div>
+    <footer class="cv-foot">
+      <button id="cvReset" type="button" class="cv-btn">恢复默认</button>
+      <span class="cv-status" id="cvStatus"></span>
+      <button id="cvSave" type="button" class="cv-btn primary">保存</button>
+    </footer>
+  </div>
+</div>
 <script src="/assets/icons.js?v=20261124b"></script>
 <script src="/assets/keys.js?v=20261123b"></script>
-<script src="/assets/app.js?v=20261124h"></script>
+<script src="/assets/app.js?v=20261201a"></script>
 <script src="/assets/resources.js?v=20261124b"></script>
 <script src="/assets/upload.js?v=20261112a"></script>
 </body>
