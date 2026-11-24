@@ -8,6 +8,7 @@
 | 抽取 | `ingest/extract.py` PROMPT 规则 11/12 | 尽量不产出错值（区间必须两界、时长原样） | 不生效 |
 | 守卫 | `ingest/guard.py` → `extract._records` | 逐字段体检：置空、降级、换算，留审计日志 | `--write` 可回写 |
 | 展示 | `core/values.py` + `query_engine` | 补单位、拆区间、去重复格，规则不变 | 立即生效 |
+| 门禁 | `eval/cards.py` | 断言卡片不许出现裸数字、重复行、条数不符 | 立即生效 |
 
 ## 规则怎么分类
 

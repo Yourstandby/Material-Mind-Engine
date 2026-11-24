@@ -16,7 +16,7 @@ NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
 UNIT_ALIAS = (
     (re.compile(r"°\s*[cC]|℃|摄氏度"), "°C"),
     (re.compile(r"°\s*[fF]|℉|华氏"), "°F"),
-    (re.compile(r"\b(?:hrs?|hours?|小时)\b", re.I), "h"),
+    (re.compile(r"\b(?:h|hr|hrs|hours?|小时)\b", re.I), "h"),
     (re.compile(r"\bmin(?:s|utes?)?\b", re.I), "min"),
     (re.compile(r"\bpsi\b", re.I), "psi"),
     (re.compile(r"\bmpa\b", re.I), "MPa"),
@@ -127,9 +127,14 @@ def parse(value, field: str = "") -> dict | None:
     if unit is None and field in FIELD_UNIT and all(_plausible(n, field) for n in numbers):
         unit, inferred = FIELD_UNIT[field], True
 
+    # 该有单位却推不出来：保留原值并标注，卡片上不留裸数字（裸 1017 会被当成任意东西）
+    body = _format(low, high, unit) if unit else text
+    if unit is None and field in FIELD_UNIT:
+        body = f"{body}（单位未标注）"
+
     return {
         "raw": raw,
-        "text": _format(low, high, unit) if unit else text,
+        "text": body,
         "unit": unit,
         "min": low,
         "max": high,
@@ -142,6 +147,15 @@ def display(value, field: str = "") -> str:
     """展示用文本：能结构化的补单位，不能的原样返回。"""
     parsed = parse(value, field)
     return parsed["text"] if parsed else ""
+
+
+def single_value_range(text, field: str = "temp_range") -> bool:
+    """是否是「本该是区间却只有一个数」的错列值。
+
+    入库守卫（置空/降级）和展示层（删重复格）共用这一条判断，避免两处规则漂移。
+    """
+    parsed = parse(text, field)
+    return bool(parsed and parsed.get("numeric") and parsed["min"] == parsed["max"])
 
 
 def span(parsed: dict | None) -> float | None:

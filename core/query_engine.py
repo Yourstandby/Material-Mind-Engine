@@ -1115,11 +1115,9 @@ def _drop_echo_cells(cells: dict) -> dict:
     """
     out = dict(cells)
     for column in value_parser.RANGE_FIELDS:
-        if column not in out:
+        if column not in out or not value_parser.single_value_range(out[column], column):
             continue
         parsed = value_parser.parse(out[column], column)
-        if not parsed or not parsed.get("numeric") or parsed["min"] != parsed["max"]:
-            continue
         peer = value_parser.parse(out.get("test_temp") or "", "test_temp")
         if peer and peer.get("numeric") and peer["min"] == parsed["min"]:
             out.pop(column, None)
@@ -1262,6 +1260,11 @@ def compare_products(products: list, question: str, rows: list | None = None,
             or key in SKELETON
             or sum(1 for row in table if row["cells"].get(key)) / len(table) >= 0.3
         ]
+        # 列被裁掉后变成空壳的行不能算记录：标题里的条数、卡片里的行数、
+        # 「N 个产品没可比数据」的统计必须同源，否则标题和内容永远对不上。
+        table = [row for row in table if any(row["cells"].get(key) for key in columns)]
+        if not table:
+            columns = []
 
     return {
         "products": picked,
@@ -1471,7 +1474,7 @@ def compare_payload(result: dict, question: str = "", numbering: dict | None = N
         "reason": reason,
         "columns": columns,
         "groups": groups,
-        "records": len(rows),
+        "records": sum(len(group["records"]) for group in groups),
         "products": len(products),
         "conclusion": conclusion,
         "conclusion_refs": conclusion_refs,
@@ -1854,7 +1857,7 @@ def product_detail(product_id: str, limit: int = 500, allowed=None) -> dict:
         "supplier": "",
         "material": "",
         "material_label": "",
-        "records": len(rows),
+        "records": sum(len(group["records"]) for group in groups),
         "documents": 0,
         "grades": [],
         "doc_types": [],

@@ -11,14 +11,15 @@ def test_single_value_range_downgrades_to_test_temp():
     """232 填进「温度范围」= 错列，值不能丢，要降到测试温度。"""
     fixed, issues = guard.audit({"temp_range": "232"})
     assert fixed["temp_range"] is None
-    assert fixed["test_temp"] == "232"
-    assert "single_value_range" in codes(issues)
+    # 降级时顺手把单位写进值里，metadata 不再留裸数字
+    assert fixed["test_temp"] == "232 °C"
+    assert {"single_value_range", "unit_inferred"} <= codes(issues)
 
 
 def test_single_value_range_dropped_when_test_temp_present():
     fixed, issues = guard.audit({"temp_range": "232", "test_temp": "180"})
     assert fixed["temp_range"] is None
-    assert fixed["test_temp"] == "180"
+    assert fixed["test_temp"] == "180 °C"
     assert "single_value_range" in codes(issues)
 
 
@@ -92,5 +93,5 @@ def test_extract_attaches_issues_to_record(monkeypatch):
     monkeypatch.setattr(extract, "chat", lambda prompt: '{"records": [{"grade": "G75M", "temp_range": "232"}]}')
     records = extract.extract("dummy", "a.pdf p.1")
     assert records[0]["temp_range"] is None
-    assert records[0]["test_temp"] == "232"
-    assert codes(records[0]["_issues"]) == {"single_value_range"}
+    assert records[0]["test_temp"] == "232 °C"
+    assert "single_value_range" in codes(records[0]["_issues"])

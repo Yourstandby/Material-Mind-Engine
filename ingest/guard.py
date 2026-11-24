@@ -104,26 +104,31 @@ def audit(record: dict) -> tuple[dict, list[dict]]:
                 out[field] = f"{hours:g} h"
                 continue
 
+        # 能按字段安全推断单位的，直接写回值本身：metadata 里就是干净值，
+        # 检索、展示、比较都不必再猜一遍。推断规则和展示层共用 core/values.py。
+        if parsed.get("inferred") and parsed.get("unit"):
+            issues.append(_issue(field, "unit_inferred", "warn", raw, f"按字段补单位 → {parsed['text']}"))
+            out[field] = parsed["text"]
+            continue
+
         if parsed.get("unit") is None and field in values.FIELD_UNIT:
-            # 补不出单位说明值本身可疑（比如把 180 填进了温度范围），记 warn 但不改
+            # 推断不出来说明值本身可疑（越界或非数值），记 warn 但不改
             issues.append(_issue(field, "unit_missing", "warn", raw, "无法确定单位"))
 
     # 温度范围必须是真的上下界。单值多半是把测试温度错填进范围列，
     # 这种情况把值降级到 test_temp（不丢数据），否则置空（不留错语义）。
     range_raw = out.get("temp_range")
-    if range_raw:
-        parsed = values.parse(range_raw, "temp_range")
-        if parsed and parsed.get("numeric") and parsed["min"] == parsed["max"]:
-            if not out.get("test_temp"):
-                out["test_temp"] = str(range_raw)
-                issues.append(
-                    _issue("temp_range", "single_value_range", "warn", range_raw, "降级为测试温度")
-                )
-            else:
-                issues.append(
-                    _issue("temp_range", "single_value_range", "warn", range_raw, "与测试温度重复，置空")
-                )
-            out["temp_range"] = None
+    if range_raw and values.single_value_range(range_raw):
+        if not out.get("test_temp"):
+            out["test_temp"] = values.display(range_raw, "test_temp")
+            issues.append(
+                _issue("temp_range", "single_value_range", "warn", range_raw, "降级为测试温度")
+            )
+        else:
+            issues.append(
+                _issue("temp_range", "single_value_range", "warn", range_raw, "与测试温度重复，置空")
+            )
+        out["temp_range"] = None
 
     # 置空后不留空字符串占位，metadata 里空值会让「有值率」统计失真
     for field in NUMERIC_FIELDS:
