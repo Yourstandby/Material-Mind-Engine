@@ -877,6 +877,8 @@ COLUMN_ORDER = (
 MAX_PRODUCTS = 12
 MAX_COLUMNS = 6
 MAX_CELL_VALUES = 3
+# 同一产品最多展示几条库内记录（每条 = 一个测试条件），超出的在标题里体现
+MAX_ROWS_PER_PRODUCT = 3
 
 # 问题提到某类数据时，把它排到表格前几列（表格宽度有限）
 FIELD_HINTS = (
@@ -1135,39 +1137,43 @@ def compare_products(products: list, question: str, rows: list | None = None,
     for item in picked:
         key = str(item.get("product_name") or "")
         metas = grouped.get(key) or grouped.get(str(item.get("product_id") or "")) or []
-        values: dict = {}
+        # 一行 = 一条库内记录。把同一产品的多条记录横向合并会把不同测试条件的
+        # 值拼成「200°C 与 -14°C 并存」「30 / 29」这种伪冲突，所以按记录分行。
+        records: list = []
+        seen_cells: set = set()
         for meta in metas:
+            cells = {}
             for column in columns:
                 cell = _cell(meta.get(column))
-                if not cell:
-                    continue
-                bucket = values.setdefault(column, {})
-                # 同一个值在库里可能写成「232」和「232°C」，按数值去重，别让表格刷成 232 / 232°C
-                bucket.setdefault(_dedupe_key(cell), cell)
-        values = {column: list(bucket.values()) for column, bucket in values.items()}
-        if not any(values.values()):
+                if cell:
+                    cells[column] = [cell]
+            if not cells:
+                continue
+            # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
+            if asked and not any(column in cells for column in asked):
+                continue
+            fingerprint = tuple(sorted((k, tuple(v)) for k, v in cells.items()))
+            if fingerprint in seen_cells:
+                continue
+            seen_cells.add(fingerprint)
+            records.append((meta, cells))
+        if not records:
             continue
-        # 问耐温就只留真有温度数据的行：配方助剂/填料只带压缩变形值时不该上表
-        if asked and not any(values.get(column) for column in asked):
-            continue
-        table.append(
-            {
-                "product": key,
-                "product_id": item.get("product_id"),
-                "cells": {column: vals for column, vals in values.items() if vals},
-                "metas": metas,
-            }
-        )
-
-    # 数据最全的排前面，别让「有牌号且有对应数值」的产品和助剂并列；
-    # 同一覆盖数时，被问的主字段有值的优先
-    if asked and len(table) > 1:
-        table.sort(
-            key=lambda row: (
-                -sum(1 for key in asked if row["cells"].get(key)),
-                0 if row["cells"].get(asked[0]) else 1,
+        records.sort(
+            key=lambda pair: (
+                -sum(1 for column in asked if column in pair[1]),
+                -len(pair[1]),
             )
         )
+        for meta, cells in records[:MAX_ROWS_PER_PRODUCT]:
+            table.append(
+                {
+                    "product": key,
+                    "product_id": item.get("product_id"),
+                    "cells": cells,
+                    "metas": [meta],
+                }
+            )
 
     # 列只有极少数行有值时不占版面：一行有值就建列，表看着像填表失败
     if table:
@@ -1216,7 +1222,9 @@ def render_compare(result: dict, question: str = "") -> str:
     products = result["products"]
     reason = REASON_LABELS.get(result.get("reason"), "")
     name = products[0].get("product_name") or ""
-    title = f"命中 {len(result['rows'])} 个产品" + (f" · {reason}" if reason else "")
+    title = f"命中 {len(result['products'])} 个产品 · {len(result['rows'])} 条记录" + (
+        f" · {reason}" if reason else ""
+    )
     if len(products) == 1 and name:
         title = f"{name} · {reason or '产品数据'}"
 
