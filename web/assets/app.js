@@ -1386,7 +1386,13 @@ function cvPreview() {
 
 function renderCardViewPanel() {
   const v = cvDraft;
-  if (!v) return;
+  if (!v || !Array.isArray(v.fields) || !v.fields.length) {
+    $("#cvFields").innerHTML = '<li class="cv-empty">没有可配置的字段</li>';
+    $("#cvControls").innerHTML = "";
+    $("#cvPreview").innerHTML = "";
+    return;
+  }
+  v.show = v.show || {};
   $("#cvFields").innerHTML = v.fields
     .map(
       (f, i) => `<li class="cv-field${f.visible ? "" : " off"}" data-i="${i}">
@@ -1429,15 +1435,65 @@ function renderCardViewPanel() {
   cvPreview();
 }
 
+/* 兜底视图：接口拿不到时（服务没重启、未登录、路由 404）面板仍然可用，
+   否则用户点开只看到一片空白，还以为功能坏了。 */
+function fallbackCardView() {
+  if (state.cardView && Array.isArray(state.cardView.fields) && state.cardView.fields.length) {
+    return state.cardView;
+  }
+  const labels = {
+    grade: "牌号", supplier: "供应商", composition: "组成", material: "材质",
+    application: "应用场景", industries: "行业", parts: "部件", media: "介质",
+    certs: "认证", temp_range: "温度范围", cs: "压缩永久变形",
+    chem_resistance: "耐化学性", test_medium: "测试介质", test_temp: "测试温度",
+    test_duration: "测试时长", confidence: "置信度",
+  };
+  return {
+    fields: Object.keys(labels).map((key) => ({ key, label: labels[key], visible: true })),
+    records_per_product: 3,
+    columns: 3,
+    show: { conclusion: true, refs: true, shared: true, note: true, missing: true, footer: true },
+  };
+}
+
+async function fetchCardView() {
+  const res = await fetch("/api/card-view", { headers: { Accept: "application/json" } });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && body.detail) detail = body.detail;
+    } catch (err) {
+      /* 非 JSON 响应，保留 HTTP 状态 */
+    }
+    if (res.status === 404) detail = "接口不存在（服务未重启？）";
+    throw new Error(detail);
+  }
+  const data = await res.json();
+  const view = data && data.view;
+  if (!view || !Array.isArray(view.fields) || !view.fields.length) {
+    throw new Error("配置为空");
+  }
+  return view;
+}
+
 async function openCardView() {
   $("#cardView").hidden = false;
   $("#cvStatus").textContent = "";
   try {
-    const data = await (await fetch("/api/card-view")).json();
-    cvDraft = data.view;
+    cvDraft = await fetchCardView();
+    state.cardView = cvDraft;
+  } catch (err) {
+    cvDraft = fallbackCardView();
+    $("#cvStatus").textContent = `读不到服务端配置（${err.message}），已用本地默认值；保存可能失败`;
+    $("#cvStatus").classList.add("bad");
+  }
+  try {
     renderCardViewPanel();
   } catch (err) {
-    $("#cvStatus").textContent = "配置读取失败";
+    $("#cvFields").innerHTML = `<li class="cv-empty">面板渲染失败：${esc(err.message)}</li>`;
+    $("#cvStatus").textContent = `面板渲染失败：${err.message}`;
+    $("#cvStatus").classList.add("bad");
   }
 }
 
@@ -1501,14 +1557,25 @@ function bindCardView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cvDraft),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          if (body && body.detail) detail = body.detail;
+        } catch (err) {
+          /* 非 JSON */
+        }
+        throw new Error(detail);
+      }
       const data = await res.json();
       state.cardView = data.view;
       cvDraft = data.view;
       $("#cvStatus").textContent = "已保存，之后的卡片按新配置渲染";
+      $("#cvStatus").classList.remove("bad");
       renderCardViewPanel();
     } catch (err) {
       $("#cvStatus").textContent = `保存失败：${err.message}`;
+      $("#cvStatus").classList.add("bad");
     }
   });
 
@@ -1518,6 +1585,7 @@ function bindCardView() {
       state.cardView = data.view;
       cvDraft = data.view;
       $("#cvStatus").textContent = "已恢复默认";
+      $("#cvStatus").classList.remove("bad");
       renderCardViewPanel();
     } catch (err) {
       $("#cvStatus").textContent = `重置失败：${err.message}`;
