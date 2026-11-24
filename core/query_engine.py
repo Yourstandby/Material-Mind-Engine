@@ -17,11 +17,42 @@ from core import applications
 from core import hybrid
 from core import vector_store as vs
 from core.config import env
-from core.llm import client as llm_client, model_name
+from core.llm import client as llm_client, model_name, reasoning_effort
 from core.normalize import localize
 
 PERSIST = env("CHROMA_PATH", "./chroma_db")
 CATALOG = env("CATALOG_COLLECTION", "catalog")
+
+# 能力型/元问题：确定性路由，不进检索也不花一次 LLM 调用。
+# 只在问题足够短且不含技术名词时生效，避免误伤「你能查 FFKM 耐温吗」这类真实提问。
+META_PATTERN = re.compile(
+    r"^(?:你|您)?(?:能|会|可以)(?:做|作|干|查|提供|帮)(?:什么|哪些|我什么)"
+    r"|^你(?:是|叫)谁|^你是谁|^怎么(?:用|使用)|^使用说明|^帮助|^help$"
+    r"|^能查(?:什么|哪些)|^支持(?:什么|哪些)|^有什么功能"
+)
+META_SKIP = ("耐温", "密度", "硬度", "牌号", "对比", "压缩", "介质", "拉伸", "密封")
+CAPABILITY_TEXT = """我是 Material Mind，查的是本地材料库，不是通用问答。
+
+**能做的三件事**
+
+1. 查数值 —— 「FFKM 耐温多少」「PEEK 的密度」
+2. 比产品 —— 「NOK 和 Solvay 的 FFKM 耐温对比」，直接出表，数值取自资料
+3. 追原文 —— 「这条数据出自哪份文件」，可跳到对应页码
+
+**边界**
+
+只基于库内资料回答；查不到就直说「资料不足」，不猜，也不拿别家产品顶替。"""
+
+
+def meta_reply(question: str) -> str | None:
+    """能力型/元问题直接返回固定文案；不是这类问题就返回 None。"""
+    text = re.sub(r"[\s?？。!！,.，、]+", "", question or "").lower()
+    if not text or len(text) > 20:
+        return None
+    if any(word in text for word in META_SKIP):
+        return None
+    return CAPABILITY_TEXT if META_PATTERN.search(text) else None
+
 TEMP_KEYWORDS = ("耐温", "温度", "temperature")
 TEMP_EXPANSION = "temperature range operating temperature -20 230 °C"
 
@@ -743,13 +774,17 @@ def build_sources(metas) -> list:
     return items
 
 
-def stream_tokens(question: str, docs, metas):
+def stream_tokens(question: str, docs, metas, reasoning: str | None = None):
     """逐 token 产出答案文本。
+
+    reasoning: 思考强度（minimal/low/medium/high），None 用环境变量默认值。
 
     必须 finally close：前端点「停止」或断网时，这个生成器会被丢弃，
     不主动关流的话上游连接会挂到超时，网关的并发槽位被一直占着（实测只有 2 个），
     后续请求全部 429「并发超限」。
     """
+    effort = (reasoning or reasoning_effort() or "").strip().lower()
+    extra = {"reasoning_effort": effort} if effort else {}
     stream = _llm().chat.completions.create(
         model=_model(),
         stream=True,
@@ -759,6 +794,7 @@ def stream_tokens(question: str, docs, metas):
                 "content": PROMPT.format(context=format_context(docs, metas), question=question),
             }
         ],
+        extra_body=extra or None,
     )
     try:
         for chunk in stream:

@@ -208,10 +208,14 @@ async def chat(request: Request, key: dict = Depends(require_key)):
                 async with httpx.AsyncClient(timeout=None) as client:
                     async with client.stream("POST", url, content=body, headers=headers) as resp:
                         if resp.status_code >= 400:
-                            detail = await resp.aread()
-                            yield b'data: {"error": "' + detail[:200] + b'"}\n\n'
+                            detail = (await resp.aread()).decode("utf-8", "replace")
+                            # 按字符截断：按字节截会切断多字节字符，生产非法 UTF-8 把客户端 SSE 解析器打崩
+                            payload = json.dumps({"error": detail[:200]}, ensure_ascii=False)
+                            yield f"data: {payload}\n\n".encode("utf-8")
                             return
-                        async for chunk in resp.aiter_raw():
+                        # aiter_bytes 会按 content-encoding 自动解压；aiter_raw 会把 gzip 原始字节
+                        # 直给客户端，而响应头已不携带 content-encoding，客户端解码必然失败
+                        async for chunk in resp.aiter_bytes():
                             yield chunk
             finally:
                 _log(request, "/v1/chat/completions", 200, 0, started)

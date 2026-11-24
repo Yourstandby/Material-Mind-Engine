@@ -30,6 +30,7 @@ from core.query_engine import (
     build_sources,
     delete_source,
     doc_products,
+    meta_reply,
     named_grades,
     named_suppliers,
     product_detail,
@@ -73,6 +74,7 @@ class Ask(BaseModel):
     part: str = ""
     medium: str = ""
     top_k: int = 5
+    reasoning: str = ""
 
 
 class ReparseIn(BaseModel):
@@ -297,6 +299,19 @@ def chat(body: Ask, request: Request):
         top_score = None
         stages: list[dict] = []
         try:
+            # 能力型/元问题：确定性回答，不进检索、不花 LLM 调用
+            capability = meta_reply(question)
+            if capability:
+                yield sse({"type": "stage", "items": [{
+                    "id": "route", "label": "能力说明 · 确定性路由", "state": "done",
+                    "detail": "未调用模型", "ms": 0,
+                }]})
+                yield sse({"type": "meta", "hits": 0, "collection": body.collection, "mode": "meta"})
+                for at in range(0, len(capability), 24):
+                    yield sse({"type": "token", "text": capability[at:at + 24]})
+                yield sse({"type": "done", "mode": "meta",
+                           "elapsed_ms": int((time.time() - started) * 1000)})
+                return
             # 先解析目标产品：命中就出确定性对比表（数值来自库，不让模型复述），
             # 一个产品都解析不出来才走 RAG + LLM 兜底。
             direct = None
@@ -353,7 +368,7 @@ def chat(body: Ask, request: Request):
             top_score = max(valid) if valid else None
             yield sse({"type": "meta", "hits": len(docs), "collection": body.collection})
             yield sse({"type": "sources", "items": build_sources(metas)})
-            tokens = stream_tokens(question, docs, metas)
+            tokens = stream_tokens(question, docs, metas, reasoning=body.reasoning)
             try:
                 for token in tokens:
                     parts.append(token)

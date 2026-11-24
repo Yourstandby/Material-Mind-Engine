@@ -55,7 +55,18 @@
           <textarea id="input" rows="1" placeholder="提问…"></textarea>
           <button class="send" id="send" type="submit" aria-label="发送">↑</button>
         </form>
-        <div class="hint"><span>Enter 发送 · Shift + Enter 换行</span><span id="hits"></span></div>
+        <div class="hint">
+          <span>Enter 发送 · Shift + Enter 换行</span>
+          <span class="hint-right">
+            <span class="reasoning" id="reasoning" role="group" aria-label="思考强度">
+              <span class="reasoning-label">思考</span>
+              <button type="button" data-r="minimal" class="on">低</button>
+              <button type="button" data-r="low">中</button>
+              <button type="button" data-r="high">高</button>
+            </span>
+            <span id="hits"></span>
+          </span>
+        </div>
       </div>
     </div>
 

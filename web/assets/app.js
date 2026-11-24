@@ -8,7 +8,11 @@ const EXAMPLES = [
   "这个产品在哪些介质里耐化学性最好？",
 ];
 
-const state = { collections: [], applications: [], active: "all", industry: "", busy: false, controller: null };
+const state = {
+  collections: [], applications: [], active: "all", industry: "",
+  busy: false, controller: null,
+  reasoning: localStorage.getItem("mme.reasoning") || "minimal",
+};
 
 /* ───────── 工具 ───────── */
 
@@ -652,6 +656,7 @@ async function ask(question) {
         collection: "catalog",
         product: state.active,
         industry: state.industry,
+        reasoning: state.reasoning,
       }),
       signal: state.controller.signal,
     });
@@ -789,6 +794,22 @@ function applyTheme(theme) {
 /* ───────── 事件绑定 ───────── */
 
 function bindEvents() {
+  // 思考强度：默认最低，选过就记住；只影响下一次提问
+  const reasoningBox = $("#reasoning");
+  const paintReasoning = () => {
+    reasoningBox.querySelectorAll("button").forEach((btn) =>
+      btn.classList.toggle("on", btn.dataset.r === state.reasoning)
+    );
+  };
+  reasoningBox.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-r]");
+    if (!btn) return;
+    state.reasoning = btn.dataset.r;
+    localStorage.setItem("mme.reasoning", state.reasoning);
+    paintReasoning();
+  });
+  paintReasoning();
+
   $("#form").addEventListener("submit", (e) => {
     e.preventDefault();
     if (state.busy) return;

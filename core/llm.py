@@ -48,6 +48,12 @@ def model_name() -> str:
     return model
 
 
+def reasoning_effort() -> str:
+    """默认思考强度。minimal / low / medium / high；留空 = 不发该参数。"""
+    value = str(env("LLM_REASONING", "minimal") or "").strip().lower()
+    return value if value in ("minimal", "low", "medium", "high") else ""
+
+
 def _retry_after(exc: Exception) -> float:
     """服务端 Retry-After（秒）；没有就返回 0。"""
     response = getattr(exc, "response", None)
