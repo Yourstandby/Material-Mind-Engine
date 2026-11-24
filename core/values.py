@@ -12,6 +12,9 @@ import re
 # 数字：支持负号与小数，不匹配区间分隔符
 NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
 
+# 展示层给「该有单位却推不出来」的值加的标注，解析前要剥掉
+UNMARKED = re.compile(r"\s*（单位未标注）\s*$")
+
 # 单位识别，按顺序取第一个命中的（°C 必须在 C 之前判，避免被 MPa 之类误吞）
 UNIT_ALIAS = (
     (re.compile(r"°\s*[cC]|℃|摄氏度"), "°C"),
@@ -97,6 +100,10 @@ def parse(value, field: str = "") -> dict | None:
     if value is None:
         return None
     raw = str(value).strip()
+    if not raw:
+        return None
+    # 幂等：已经标注过的值再解析一次不能叠加成「（单位未标注）（单位未标注）」
+    raw = UNMARKED.sub("", raw).strip()
     if not raw:
         return None
     from core.normalize import localize

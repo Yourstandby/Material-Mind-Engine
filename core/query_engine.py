@@ -893,8 +893,10 @@ FIELD_HINTS = (
 COMPARE_WORDS = ("对比", "比较", "哪个", "最高", "最低", "最大", "最小", "最好", "最差", "分别", "排序")
 MAX_UP_WORDS = ("最高", "最大", "最好", "最强")
 MAX_DOWN_WORDS = ("最低", "最小", "最差", "最弱")
-# 「差距 / 跨度」类问题算区间宽度，不是求单个极值
-SPAN_WORDS = ("差距", "差多少", "相差", "跨度", "范围多", "相差多少", "差几")
+# 「差距 / 差多少」问的是两个产品之间差多少；「跨度 / 范围多宽」问的是一个产品自身的区间宽度。
+# 两种语义都可以叫「差距」，所以先看有几个产品再定，别一律按单产品区间算。
+GAP_WORDS = ("差距", "相差", "差多少", "差几", "高多少", "低多少")
+SPAN_WORDS = ("跨度", "范围多", "区间多", "范围有", "区间有")
 # 卡片骨架列：问题没点名也要建，否则卡片出来是残的
 SKELETON = ("temp_range", "test_temp", "test_duration")
 
@@ -1275,40 +1277,94 @@ def compare_products(products: list, question: str, rows: list | None = None,
     }
 
 
-def _conclusion(result: dict, question: str):
-    """求极值与区间跨度都由代码算，不交给模型。
+def _span_conclusion(result: dict, labels: dict):
+    """单产品自身的区间宽度：某个产品的 min ~ max 有多宽。"""
+    ordered = sorted(
+        result["columns"],
+        key=lambda column: column["key"] not in value_parser.RANGE_FIELDS,
+    )
+    for column in ordered:
+        best = None
+        for row in result["rows"]:
+            parsed = value_parser.parse((row["cells"].get(column["key"]) or [""])[0], column["key"])
+            if not parsed or not parsed.get("unit"):
+                continue  # 没有单位的数不拿来下结论：宁可不答，也别答一个没法核对的差值
+            width = value_parser.span(parsed)
+            if width is None:
+                continue
+            if best is None or width > best[0]:
+                best = (width, row, parsed)
+        if best:
+            width, row, parsed = best
+            label = labels.get(column["key"], column["key"])
+            unit = parsed.get("unit") or ""
+            return f"结论: {row['product']} {label} {parsed['text']}，跨度 {width:g} {unit}".strip(), row
+    return "", None
 
-    「差距 / 差多少」这类问题问的是区间宽度，求极值答不了，单独走一条分支。
+
+def _gap_conclusion(result: dict, labels: dict, want_max: bool = True):
+    """跨产品极差：同一字段上最高和最低的两个产品差多少。
+
+    「FFKM 和 FKM 耐温差距」问的不是任何一个产品自身的区间，而是两者极值之差，
+    拿单产品跨度去答会答成「跨度 210 °C」，跟用户问的完全是两件事。
     """
+    ordered = sorted(
+        result["columns"],
+        key=lambda column: column["key"] not in value_parser.RANGE_FIELDS,
+    )
+    for column in ordered:
+        per_product: dict = {}
+        for row in result["rows"]:
+            cell = (row["cells"].get(column["key"]) or [""])[0]
+            parsed = value_parser.parse(cell, column["key"])
+            if not parsed or not parsed.get("numeric") or not parsed.get("unit"):
+                continue  # 单位未标注的值可以展示，但不能用来算「相差多少」
+            if column["key"] in value_parser.RANGE_FIELDS and value_parser.single_value_range(
+                cell, column["key"]
+            ):
+                continue  # 单值「范围」已是公认的误标，别拿它下结论
+            value = parsed["max"] if want_max else parsed["min"]
+            current = per_product.get(row["product"])
+            if current is None or (value > current[0] if want_max else value < current[0]):
+                per_product[row["product"]] = (value, row, parsed)
+        if len(per_product) < 2:
+            continue
+        top = max(per_product.values(), key=lambda item: item[0])
+        bottom = min(per_product.values(), key=lambda item: item[0])
+        if top[0] == bottom[0]:
+            continue  # 全部一样，没有差距可报
+        label = labels.get(column["key"], column["key"])
+        unit = top[2].get("unit") or ""
+        return (
+            f"结论: {label}最高 {top[1]['product']} {top[2]['text']}，"
+            f"最低 {bottom[1]['product']} {bottom[2]['text']}，相差 {top[0] - bottom[0]:g} {unit}".strip(),
+            top[1],
+        )
+    return "", None
+
+
+def _conclusion(result: dict, question: str):
+    """求极值、区间跨越、产品间差距都由代码算，不交给模型。"""
     want_max = any(word in question for word in MAX_UP_WORDS)
     want_min = any(word in question for word in MAX_DOWN_WORDS)
+    want_gap = any(word in question for word in GAP_WORDS) and not (want_max or want_min)
     want_span = any(word in question for word in SPAN_WORDS) and not (want_max or want_min)
-    if not want_span and want_max == want_min:
+    if not want_gap and not want_span and want_max == want_min:
         return "", None
     labels = {column["key"]: column["label"] for column in result["columns"]}
+    products = {row["product"] for row in result["rows"]}
 
-    if want_span:
-        # 区间列优先，其次任何能拆出 min/max 的数值列
-        ordered = sorted(
-            result["columns"],
-            key=lambda column: column["key"] not in value_parser.RANGE_FIELDS,
-        )
-        for column in ordered:
-            best = None
-            for row in result["rows"]:
-                parsed = value_parser.parse((row["cells"].get(column["key"]) or [""])[0], column["key"])
-                width = value_parser.span(parsed)
-                if width is None:
-                    continue
-                if best is None or width > best[0]:
-                    best = (width, row, parsed)
-            if best:
-                width, row, parsed = best
-                label = labels.get(column["key"], column["key"])
-                return (
-                    f"结论: {row['product']} {label} {parsed['text']}，跨度 {width:g} {parsed.get('unit') or ''}".strip(),
-                    row,
-                )
+    # 「差距」在多产品场景下优先答产品间极差，单产品才退化成自身区间宽度
+    if want_gap and len(products) >= 2:
+        text, row = _gap_conclusion(result, labels, want_max=True)
+        if text:
+            return text, row
+    if want_span or want_gap:
+        text, row = _span_conclusion(result, labels)
+        if text:
+            return text, row
+        if want_gap:
+            return _gap_conclusion(result, labels, want_max=True)
         return "", None
 
     for column in result["columns"]:

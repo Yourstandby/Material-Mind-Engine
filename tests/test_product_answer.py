@@ -335,3 +335,62 @@ def test_payload_no_note_when_range_exists():
         "total": 1,
     }
     assert "note" not in qe.compare_payload(result, "FFKM 耐温范围")["groups"][0]
+
+
+# ---- 结论层三种语义：极值 / 单产品跨度 / 跨产品差距 ----
+
+
+def _result(rows, columns=None):
+    return {
+        "products": [{"product_id": r["product"], "product_name": r["product"]} for r in rows],
+        "columns": columns or [{"key": "temp_range", "label": "温度范围"}],
+        "rows": rows,
+        "reason": "material",
+        "total": len(rows),
+    }
+
+
+def _row(product, value, key="temp_range"):
+    return {"product": product, "cells": {key: [value]}, "metas": [{}]}
+
+
+def test_gap_between_products_uses_cross_product_extremes():
+    """「A 和 B 耐温差多少」问的是两者之差，不是某个产品自身区间宽度。"""
+    result = _result([_row("A", "-20 ~ 230 °C"), _row("B", "-20 ~ 200 °C")])
+    text, _row_hit = qe._conclusion(result, "A 和 B 耐温差多少")
+    assert "相差 30 °C" in text
+    assert "跨度" not in text
+
+
+def test_span_of_single_product_keeps_range_width():
+    result = _result([_row("A", "-20 ~ 230 °C")])
+    text, _row_hit = qe._conclusion(result, "A 的耐温跨度")
+    assert "跨度 250 °C" in text
+
+
+def test_gap_with_single_product_falls_back_to_span():
+    result = _result([_row("A", "-20 ~ 230 °C")])
+    text, _row_hit = qe._conclusion(result, "A 耐高温低温的差距")
+    assert "跨度" in text
+
+
+def test_conclusion_ignores_unitless_values():
+    """单位未标注的值可以展示，但不能拿来算「相差多少」。"""
+    result = _result([
+        _row("A", "300 °C", key="test_temp"),
+        _row("B", "no data", key="test_temp"),
+        _row("C", "1023", key="test_temp"),
+    ], columns=[{"key": "test_temp", "label": "测试温度"}])
+    text, _row_hit = qe._conclusion(result, "耐温差距")
+    assert text == ""
+
+
+def test_conclusion_ignores_single_value_range():
+    """单值「范围」是公认误标，不能拿它下结论。"""
+    result = _result([_row("A", "19.8 °C"), _row("B", "0.06 °C")])
+    assert qe._conclusion(result, "耐温差距")[0] == ""
+
+
+def test_conclusion_skips_when_all_values_equal():
+    result = _result([_row("A", "200 °C"), _row("B", "200 °C")])
+    assert qe._conclusion(result, "耐温差距")[0] == ""
